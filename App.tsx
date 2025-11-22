@@ -354,7 +354,94 @@ const App: React.FC = () => {
         <aside className={`w-full lg:w-80 ${theme.bgPanel} border-r ${theme.border} flex flex-col z-40 shrink-0`}>
           <div className="p-6 space-y-6 sticky top-0">
             
-            {/* DSP Panel */}
+            {/* 1. Global Stats */}
+            <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
+              <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${theme.accent.replace('text-', 'bg-')}`}></span>
+                {t.globalStats} ({accelAxis.toUpperCase()})
+              </h3>
+              <div className="space-y-2">
+                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                   <span className={`text-xs ${theme.textSecondary}`}>{t.maxPkPk}</span>
+                   <span className="font-mono text-sm">{globalStats?.pkPk.toFixed(3)}</span>
+                </div>
+                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                   <span className={`text-xs ${theme.textSecondary}`}>{t.max0Pk}</span>
+                   <span className="font-mono text-sm">{globalStats?.zeroPk.toFixed(3)}</span>
+                </div>
+                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                   <span className={`text-xs ${theme.textSecondary}`}>{t.a95}</span>
+                   <span className="font-mono text-sm">{globalStats?.a95.toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between items-center pt-1">
+                   <span className={`text-xs ${theme.accent} font-bold`}>{t.rms}</span>
+                   <span className={`font-mono text-sm ${theme.accent}`}>{globalStats?.rms.toFixed(3)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Window Stats & Controls (FFT) */}
+            {windowStats && (
+              <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
+                <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
+                  <span className={`w-1.5 h-1.5 rounded-full bg-purple-500`}></span>
+                  {t.windowAnalysis}
+                </h3>
+                <div className="space-y-2">
+                   <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                     <span className={`text-xs ${theme.textSecondary}`}>{t.rms}</span>
+                     <span className="font-mono text-sm">{windowStats.rms.toFixed(3)}</span>
+                   </div>
+                   <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                     <span className={`text-xs ${theme.textSecondary}`}>{t.peak}</span>
+                     <span className="font-mono text-sm">{windowStats.peakVal.toFixed(3)}</span>
+                   </div>
+                   <div className="flex justify-between items-center">
+                     <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}</span>
+                     <span className="font-mono text-sm text-yellow-500">{peakFreq?.freq.toFixed(2)} Hz</span>
+                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. Window Control */}
+            <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
+              <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
+                {t.windowControl}
+              </label>
+              <div className="space-y-4">
+                <input
+                  type="range"
+                  min={0}
+                  max={maxTime - windowSize}
+                  step={0.1}
+                  value={windowStart}
+                  onChange={(e) => setWindowStart(Number(e.target.value))}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${theme.bgCard}`}
+                />
+                <div className="flex justify-between text-xs font-mono">
+                  <span>{windowStart.toFixed(2)}s</span>
+                  <span>{(windowStart + windowSize).toFixed(2)}s</span>
+                </div>
+                <div className="flex gap-2">
+                   {[1, 2, 4, 8].map(ws => (
+                     <button
+                      key={ws}
+                      onClick={() => setWindowSize(ws)}
+                      className={`flex-1 py-1 text-xs rounded border ${
+                        windowSize === ws 
+                          ? `${theme.border} ${theme.accent} font-bold bg-opacity-10` 
+                          : `${theme.border} ${theme.textSecondary}`
+                      }`}
+                     >
+                       {ws}s
+                     </button>
+                   ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 4. DSP Panel (Moved Here) */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
               <div className="flex justify-between items-center mb-3">
                 <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase flex items-center gap-2`}>
@@ -425,93 +512,8 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Global Stats */}
+            {/* 5. Chart Height */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
-              <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${theme.accent.replace('text-', 'bg-')}`}></span>
-                {t.globalStats} ({accelAxis.toUpperCase()})
-              </h3>
-              <div className="space-y-2">
-                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                   <span className={`text-xs ${theme.textSecondary}`}>{t.maxPkPk}</span>
-                   <span className="font-mono text-sm">{globalStats?.pkPk.toFixed(3)}</span>
-                </div>
-                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                   <span className={`text-xs ${theme.textSecondary}`}>{t.max0Pk}</span>
-                   <span className="font-mono text-sm">{globalStats?.zeroPk.toFixed(3)}</span>
-                </div>
-                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                   <span className={`text-xs ${theme.textSecondary}`}>{t.a95}</span>
-                   <span className="font-mono text-sm">{globalStats?.a95.toFixed(3)}</span>
-                </div>
-                <div className="flex justify-between items-center pt-1">
-                   <span className={`text-xs ${theme.accent} font-bold`}>{t.rms}</span>
-                   <span className={`font-mono text-sm ${theme.accent}`}>{globalStats?.rms.toFixed(3)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Window Stats & Controls */}
-            {windowStats && (
-              <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
-                <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
-                  <span className={`w-1.5 h-1.5 rounded-full bg-purple-500`}></span>
-                  {t.windowAnalysis}
-                </h3>
-                <div className="space-y-2">
-                   <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                     <span className={`text-xs ${theme.textSecondary}`}>{t.rms}</span>
-                     <span className="font-mono text-sm">{windowStats.rms.toFixed(3)}</span>
-                   </div>
-                   <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                     <span className={`text-xs ${theme.textSecondary}`}>{t.peak}</span>
-                     <span className="font-mono text-sm">{windowStats.peakVal.toFixed(3)}</span>
-                   </div>
-                   <div className="flex justify-between items-center">
-                     <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}</span>
-                     <span className="font-mono text-sm text-yellow-500">{peakFreq?.freq.toFixed(2)} Hz</span>
-                   </div>
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
-                {t.windowControl}
-              </label>
-              <div className="space-y-4">
-                <input
-                  type="range"
-                  min={0}
-                  max={maxTime - windowSize}
-                  step={0.1}
-                  value={windowStart}
-                  onChange={(e) => setWindowStart(Number(e.target.value))}
-                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${theme.bgCard}`}
-                />
-                <div className="flex justify-between text-xs font-mono">
-                  <span>{windowStart.toFixed(2)}s</span>
-                  <span>{(windowStart + windowSize).toFixed(2)}s</span>
-                </div>
-                <div className="flex gap-2">
-                   {[1, 2, 4, 8].map(ws => (
-                     <button
-                      key={ws}
-                      onClick={() => setWindowSize(ws)}
-                      className={`flex-1 py-1 text-xs rounded border ${
-                        windowSize === ws 
-                          ? `${theme.border} ${theme.accent} font-bold bg-opacity-10` 
-                          : `${theme.border} ${theme.textSecondary}`
-                      }`}
-                     >
-                       {ws}s
-                     </button>
-                   ))}
-                </div>
-              </div>
-            </div>
-
-            <div>
               <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
                  {t.chartHeight} ({chartHeight}px)
               </label>
@@ -522,8 +524,8 @@ const App: React.FC = () => {
               />
             </div>
 
-             {/* AI Analysis */}
-             <div>
+             {/* 6. AI Analysis */}
+             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
               <button
                 onClick={handleRunAI}
                 disabled={isAnalyzing || !process.env.API_KEY}
@@ -537,7 +539,7 @@ const App: React.FC = () => {
               </button>
               
               {aiResult && (
-                <div className={`mt-4 rounded-xl p-4 border ${theme.border} ${theme.bgCard}`}>
+                <div className={`mt-4 pt-4 border-t ${theme.border}`}>
                    <div className={`text-xs font-bold uppercase mb-2 ${
                      aiResult.status === 'safe' ? 'text-green-500' : 'text-yellow-500'
                    }`}>{aiResult.status}</div>
