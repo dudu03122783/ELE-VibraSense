@@ -1,3 +1,4 @@
+
 export interface RawDataPoint {
   time: number;
   ax: number; // Gals
@@ -41,4 +42,25 @@ export interface AIAnalysisResult {
   status: 'safe' | 'warning' | 'danger' | 'unknown';
   summary: string;
   recommendations: string[];
+}
+
+export interface ThemeConfig {
+  id: string;
+  name: string;
+  bgApp: string;
+  bgCard: string;
+  bgPanel: string;
+  textPrimary: string;
+  textSecondary: string;
+  border: string;
+  accent: string;
+  gridColor: string;
+  brushColor: string; // Added for visibility
+  chartColors: {
+    ax: string;
+    ay: string;
+    az: string;
+    vz: string;
+    sz: string;
+  };
 }

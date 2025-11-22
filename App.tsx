@@ -1,49 +1,165 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import FileUpload from './components/FileUpload';
 import { TimeChart, FFTChart } from './components/Charts';
 import { calculateFFT, calculateStats, downsampleData } from './utils/mathUtils';
 import { analyzeWithGemini } from './services/geminiService';
-import { ProcessedDataPoint, DataAxis, FFTResult, AnalysisStats, AIAnalysisResult } from './types';
+import { ProcessedDataPoint, DataAxis, AnalysisStats, AIAnalysisResult, ThemeConfig } from './types';
 
 const SAMPLE_RATE = 1600;
 
+// --- TRANSLATIONS ---
+const TRANSLATIONS = {
+  zh: {
+    title: 'VIBRASENSE.AI',
+    upload: '上传文件',
+    theme: '主题',
+    close: '关闭文件',
+    globalStats: '全局统计',
+    windowAnalysis: '窗口分析 (FFT)',
+    windowControl: '分析窗口控制',
+    chartHeight: '图表高度',
+    aiDiag: 'AI 智能诊断',
+    analyzing: '分析中...',
+    kinematics: '运动学',
+    vibration: '振动',
+    fft: '频谱分析',
+    yScale: 'Y轴范围',
+    refLines: '参考线',
+    dominant: '主频',
+    unitAccel: 'Gals',
+    maxPkPk: '最大峰峰值 (Max Pk-Pk)',
+    max0Pk: '最大单峰值 (Max 0-Pk)',
+    a95: 'A95 峰峰值',
+    rms: '有效值 (RMS)',
+    peak: '峰值 (Peak)',
+    dragDrop: '拖拽或点击上传',
+    supports: '支持 .csv 格式 (包含 ax, ay, az 列)',
+    systemInfo: '系统将自动通过积分计算速度(Vz)和位移(Sz)'
+  },
+  en: {
+    title: 'VIBRASENSE.AI',
+    upload: 'Upload File',
+    theme: 'Theme',
+    close: 'Close File',
+    globalStats: 'Global Stats',
+    windowAnalysis: 'Window Analysis (FFT)',
+    windowControl: 'Analysis Window',
+    chartHeight: 'Chart Height',
+    aiDiag: 'AI Diagnostics',
+    analyzing: 'Analyzing...',
+    kinematics: 'KINEMATICS',
+    vibration: 'VIBRATION',
+    fft: 'FREQUENCY ANALYSIS',
+    yScale: 'Y-SCALE',
+    refLines: 'Ref Lines',
+    dominant: 'Dominant',
+    unitAccel: 'Gals',
+    maxPkPk: 'Max Pk-Pk',
+    max0Pk: 'Max 0-Pk',
+    a95: 'A95 Pk-Pk',
+    rms: 'RMS',
+    peak: 'Peak',
+    dragDrop: 'Drag & Drop or Click to Upload',
+    supports: 'Supports .csv (ax, ay, az)',
+    systemInfo: 'The system will automatically calculate Velocity (Vz) and Displacement (Sz) via integration.'
+  }
+};
+
+// --- THEME DEFINITIONS ---
+const THEMES: ThemeConfig[] = [
+  {
+    id: 'midnight',
+    name: 'Midnight (Default)',
+    bgApp: 'bg-gray-950',
+    bgCard: 'bg-gray-900/50',
+    bgPanel: 'bg-gray-900',
+    textPrimary: 'text-gray-100',
+    textSecondary: 'text-gray-400',
+    border: 'border-gray-800',
+    accent: 'text-teal-400',
+    gridColor: '#374151',
+    brushColor: '#6b7280', // Lighter gray for better visibility
+    chartColors: { ax: '#ef4444', ay: '#22c55e', az: '#3b82f6', vz: '#a855f7', sz: '#f97316' }
+  },
+  {
+    id: 'antigravity',
+    name: 'Antigravity',
+    bgApp: 'bg-slate-950',
+    bgCard: 'bg-slate-900/80',
+    bgPanel: 'bg-slate-900',
+    textPrimary: 'text-slate-100',
+    textSecondary: 'text-slate-400',
+    border: 'border-slate-700',
+    accent: 'text-fuchsia-400',
+    gridColor: '#475569',
+    brushColor: '#cbd5e1',
+    chartColors: { ax: '#f472b6', ay: '#4ade80', az: '#22d3ee', vz: '#c084fc', sz: '#fbbf24' }
+  },
+  {
+    id: 'engineering',
+    name: 'Engineering',
+    bgApp: 'bg-gray-100',
+    bgCard: 'bg-white shadow-sm',
+    bgPanel: 'bg-white',
+    textPrimary: 'text-gray-900',
+    textSecondary: 'text-gray-500',
+    border: 'border-gray-200',
+    accent: 'text-blue-600',
+    gridColor: '#e5e7eb',
+    brushColor: '#6b7280',
+    chartColors: { ax: '#dc2626', ay: '#16a34a', az: '#2563eb', vz: '#7c3aed', sz: '#d97706' }
+  }
+];
+
 const App: React.FC = () => {
+  // Language State
+  const [lang, setLang] = useState<'zh' | 'en'>('zh');
+  const t = TRANSLATIONS[lang];
+
+  // Data State
   const [data, setData] = useState<ProcessedDataPoint[] | null>(null);
   const [fileName, setFileName] = useState<string>("");
-  
-  // Windowing State
-  const [windowStart, setWindowStart] = useState<number>(0); // in Seconds
-  const [windowSize, setWindowSize] = useState<number>(4); // in Seconds
-  const [selectedAxis, setSelectedAxis] = useState<DataAxis>('vz');
-  
-  // Visualization State
   const [displayData, setDisplayData] = useState<ProcessedDataPoint[]>([]);
-  const [refLineLevel, setRefLineLevel] = useState<number | null>(null); // null, 10, or 15
+
+  // Theme State
+  const [currentThemeId, setCurrentThemeId] = useState<string>('midnight');
+  const theme = useMemo(() => THEMES.find(t => t.id === currentThemeId) || THEMES[0], [currentThemeId]);
+
+  // Axis Selection State
+  const [accelAxis, setAccelAxis] = useState<DataAxis>('az'); // AX, AY, AZ
+  const [intAxis, setIntAxis] = useState<DataAxis>('vz'); // VZ, SZ
+
+  // Y-Axis Control State
+  const [yMinAccel, setYMinAccel] = useState<string>('');
+  const [yMaxAccel, setYMaxAccel] = useState<string>('');
+  const [yMinInt, setYMinInt] = useState<string>('');
+  const [yMaxInt, setYMaxInt] = useState<string>('');
   
-  // AI State
+  // Chart Height State
+  const [chartHeight, setChartHeight] = useState<number>(350);
+
+  // Windowing State
+  const [windowStart, setWindowStart] = useState<number>(0);
+  const [windowSize, setWindowSize] = useState<number>(4);
+  
+  // Analysis State
   const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [refLineLevel, setRefLineLevel] = useState<number | null>(null); // null, 10, 15
 
-  // Colors mapping
-  const colors: Record<DataAxis, string> = {
-    ax: '#ef4444',
-    ay: '#22c55e',
-    az: '#3b82f6',
-    vz: '#a855f7',
-    sz: '#f97316',
-  };
-
-  // Prepare Display Data (Downsampled Global View)
+  // Downsampling Effect
   useEffect(() => {
     if (data) {
-      // Downsample for responsive UI if data is large (> 10000 points)
       setDisplayData(downsampleData(data, 8000));
     } else {
       setDisplayData([]);
     }
   }, [data]);
 
-  // Derived Data based on Window for FFT Analysis
+  // --- COMPUTED DATA ---
+
+  // 1. Current Window Slice (for FFT and Local Stats)
   const currentWindowData = useMemo(() => {
     if (!data) return [];
     const startIndex = Math.floor(windowStart * SAMPLE_RATE);
@@ -51,24 +167,21 @@ const App: React.FC = () => {
     return data.slice(startIndex, Math.min(endIndex, data.length));
   }, [data, windowStart, windowSize]);
 
-  // GLOBAL STATS: Calculated on the FULL dataset for the selected axis
+  // 2. Global Stats for ACCELERATION Axis
   const globalStats = useMemo(() => {
     if (!data) return null;
-    return calculateStats(data, selectedAxis);
-  }, [data, selectedAxis]);
+    return calculateStats(data, accelAxis);
+  }, [data, accelAxis]);
 
-  // WINDOW STATS & FFT: Calculated only on the slice
+  // 3. FFT Data & Window Stats
   const { fftData, windowStats, peakFreq } = useMemo(() => {
     if (currentWindowData.length === 0) return { fftData: [], windowStats: null, peakFreq: null };
 
-    const series = currentWindowData.map(d => d[selectedAxis]);
+    const series = currentWindowData.map(d => d[accelAxis]);
     const fft = calculateFFT(series, SAMPLE_RATE);
-    // calculateStats used for RMS primarily here
-    const stats = calculateStats(currentWindowData, selectedAxis);
+    const stats = calculateStats(currentWindowData, accelAxis);
     
-    // Find max freq
-    let maxMag = 0;
-    let pFreq = 0;
+    let maxMag = 0, pFreq = 0;
     fft.forEach(f => {
       if(f.magnitude > maxMag) {
         maxMag = f.magnitude;
@@ -77,13 +190,14 @@ const App: React.FC = () => {
     });
 
     return { fftData: fft, windowStats: stats, peakFreq: { freq: pFreq, mag: maxMag } };
-  }, [currentWindowData, selectedAxis]);
+  }, [currentWindowData, accelAxis]);
+
+  // --- HANDLERS ---
 
   const handleRunAI = async () => {
     if (!windowStats || !peakFreq) return;
     setIsAnalyzing(true);
-    // We pass global stats to AI as well for context if needed, but focusing on window for now
-    const result = await analyzeWithGemini({ ...windowStats, axis: selectedAxis }, peakFreq);
+    const result = await analyzeWithGemini({ ...windowStats, axis: accelAxis }, peakFreq);
     setAiResult(result);
     setIsAnalyzing(false);
   };
@@ -92,165 +206,156 @@ const App: React.FC = () => {
     if (!data) return;
     const maxStart = data[data.length - 1].time - windowSize;
     let newStart = clickedTime - (windowSize / 2);
-    
     if (newStart < 0) newStart = 0;
     if (newStart > maxStart) newStart = maxStart;
-    
     setWindowStart(newStart);
+  };
+
+  const parseDomain = (min: string, max: string): [number | 'auto', number | 'auto'] => {
+    const pMin = min === '' || isNaN(Number(min)) ? 'auto' : Number(min);
+    const pMax = max === '' || isNaN(Number(max)) ? 'auto' : Number(max);
+    return [pMin, pMax];
   };
 
   if (!data) {
     return (
-      <div className="min-h-screen bg-gray-950 flex flex-col relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-teal-500 via-purple-500 to-blue-500"></div>
-        <header className="p-6 flex justify-between items-center z-10">
-          <h1 className="text-2xl font-mono font-bold tracking-tighter text-white">
-            VIBRA<span className="text-teal-400">SENSE</span>.AI
-          </h1>
-        </header>
+      <div className={`min-h-screen ${theme.bgApp} flex flex-col relative overflow-hidden`}>
+        {/* Simple Language Switcher on Landing */}
+        <div className="absolute top-4 right-4 z-50">
+          <button onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} className="text-white bg-gray-800 px-3 py-1 rounded text-sm border border-gray-700">
+            {lang === 'zh' ? 'EN' : '中文'}
+          </button>
+        </div>
         <FileUpload onDataLoaded={(d, name) => { setData(d); setFileName(name); }} />
+        <div className="absolute bottom-8 text-center w-full text-gray-500 text-xs">
+           <p>{t.dragDrop}</p>
+           <p>{t.systemInfo}</p>
+        </div>
       </div>
     );
   }
 
   const maxTime = data[data.length - 1].time;
-  const showRefLines = refLineLevel !== null && ['ax', 'ay', 'az'].includes(selectedAxis);
-  const currentRefLines = showRefLines && refLineLevel ? [refLineLevel, -refLineLevel] : undefined;
-  const unit = selectedAxis.startsWith('a') ? 'Gals' : selectedAxis === 'vz' ? 'm/s' : 'm';
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 font-sans flex flex-col overflow-hidden">
-      {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-md sticky top-0 z-50">
+    <div className={`min-h-screen ${theme.bgApp} ${theme.textPrimary} font-sans flex flex-col overflow-y-auto`}>
+      
+      {/* --- HEADER --- */}
+      <header className={`border-b ${theme.border} ${theme.bgCard} backdrop-blur-md sticky top-0 z-50`}>
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-mono font-bold tracking-tighter">
-              VIBRA<span className="text-teal-400">SENSE</span>.AI
+              VIBRA<span className={theme.accent}>SENSE</span>.AI
             </h1>
-            <div className="h-4 w-px bg-gray-700"></div>
-            <span className="text-sm text-gray-400 font-mono">{fileName}</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400">
-              {data.length.toLocaleString()} samples
-            </span>
+            <div className="h-4 w-px bg-gray-600"></div>
+            <span className={`text-sm ${theme.textSecondary} font-mono`}>{fileName}</span>
           </div>
           
           <div className="flex items-center gap-4">
+            
+            {/* Language */}
+            <button 
+              onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
+              className={`text-xs font-bold px-2 py-1 rounded border ${theme.border} ${theme.textPrimary} hover:bg-white/5`}
+            >
+              {lang === 'zh' ? 'EN' : '中文'}
+            </button>
+
+            <div className="h-4 w-px bg-gray-600"></div>
+
+            {/* Theme Selector */}
+            <div className="flex items-center gap-2">
+              <span className={`text-xs uppercase font-bold ${theme.textSecondary}`}>{t.theme}</span>
+              <select 
+                value={currentThemeId} 
+                onChange={(e) => setCurrentThemeId(e.target.value)}
+                className={`text-xs p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+              >
+                {THEMES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+
+            <div className="h-4 w-px bg-gray-600"></div>
+
             <button 
               onClick={() => setData(null)}
-              className="text-sm text-gray-400 hover:text-white transition-colors"
+              className={`text-sm ${theme.textSecondary} hover:${theme.textPrimary} transition-colors`}
             >
-              Close File
+              {t.close}
             </button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Left Panel: Controls & Stats */}
-        <aside className="w-full lg:w-80 bg-gray-900 border-r border-gray-800 flex flex-col overflow-y-auto z-40">
-          <div className="p-6 space-y-8">
-            {/* Axis Selection */}
-            <div>
-              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">Signal Channel</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['ax', 'ay', 'az', 'vz', 'sz'] as DataAxis[]).map(axis => (
-                  <button
-                    key={axis}
-                    onClick={() => setSelectedAxis(axis)}
-                    className={`px-3 py-2 rounded text-sm font-mono font-medium transition-all ${
-                      selectedAxis === axis 
-                        ? 'bg-gray-800 text-white ring-1 ring-gray-600 shadow-lg' 
-                        : 'text-gray-500 hover:bg-gray-800/50 hover:text-gray-300'
-                    }`}
-                    style={{ color: selectedAxis === axis ? colors[axis] : undefined }}
-                  >
-                    {axis.toUpperCase()}
-                  </button>
-                ))}
+      <main className="flex-1 flex flex-col lg:flex-row">
+        {/* --- LEFT SIDEBAR (CONTROLS & STATS) --- */}
+        <aside className={`w-full lg:w-80 ${theme.bgPanel} border-r ${theme.border} flex flex-col z-40 shrink-0`}>
+          <div className="p-6 space-y-6 sticky top-0">
+            
+            {/* 1. Global Stats Panel */}
+            <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
+              <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${theme.accent.replace('text-', 'bg-')}`}></span>
+                {t.globalStats} ({accelAxis.toUpperCase()})
+              </h3>
+              <div className="space-y-2">
+                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                   <span className={`text-xs ${theme.textSecondary}`}>{t.maxPkPk}</span>
+                   <span className="font-mono text-sm">{globalStats?.pkPk.toFixed(3)}</span>
+                </div>
+                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                   <span className={`text-xs ${theme.textSecondary}`}>{t.max0Pk}</span>
+                   <span className="font-mono text-sm">{globalStats?.zeroPk.toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                   <span className={`text-xs ${theme.textSecondary}`}>{t.a95}</span>
+                   <span className="font-mono text-sm">{globalStats?.a95.toFixed(3)}</span>
+                </div>
               </div>
             </div>
 
-            {/* Reference Lines (Only for Accelerations) */}
-            {['ax', 'ay', 'az'].includes(selectedAxis) && (
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">
-                  Reference Lines (Gals)
-                </label>
-                <div className="flex bg-gray-800 rounded-lg p-1 border border-gray-700">
-                  {[null, 10, 15].map((level) => (
-                    <button
-                      key={level ?? 'off'}
-                      onClick={() => setRefLineLevel(level)}
-                      className={`flex-1 py-1.5 text-xs font-medium rounded ${
-                        refLineLevel === level 
-                          ? 'bg-gray-700 text-white shadow-sm' 
-                          : 'text-gray-500 hover:text-gray-300'
-                      }`}
-                    >
-                      {level ? `±${level}` : 'Off'}
-                    </button>
-                  ))}
+            {/* 2. Window Stats (Restored) */}
+            {windowStats && (
+              <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
+                <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
+                  <span className={`w-1.5 h-1.5 rounded-full bg-purple-500`}></span>
+                  {t.windowAnalysis}
+                </h3>
+                <div className="space-y-2">
+                   <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                     <span className={`text-xs ${theme.textSecondary}`}>{t.rms}</span>
+                     <span className="font-mono text-sm">{windowStats.rms.toFixed(3)}</span>
+                   </div>
+                   <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
+                     <span className={`text-xs ${theme.textSecondary}`}>{t.peak}</span>
+                     <span className="font-mono text-sm">{windowStats.peakVal.toFixed(3)}</span>
+                   </div>
+                   <div className="flex justify-between items-center">
+                     <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}</span>
+                     <span className="font-mono text-sm text-yellow-500">{peakFreq?.freq.toFixed(2)} Hz</span>
+                   </div>
                 </div>
               </div>
             )}
 
-            {/* Global Statistics Display (Sidebar) */}
-            <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50 backdrop-blur-sm">
-              <h3 className="text-xs font-bold text-gray-400 uppercase mb-4 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-teal-400"></span>
-                Global Stats (ISO 18738)
-              </h3>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center border-b border-gray-700/50 pb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                    <span className="text-xs text-gray-500">Max Pk-Pk</span>
-                  </div>
-                  <span className="font-mono text-sm text-white">
-                    {globalStats?.pkPk.toFixed(3)} <span className="text-[10px] text-gray-600">{unit}</span>
-                  </span>
-                </div>
-                <div className="flex justify-between items-center border-b border-gray-700/50 pb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full border border-white border-dashed"></span>
-                    <span className="text-xs text-gray-500">Max 0-Pk</span>
-                  </div>
-                  <span className="font-mono text-sm text-white">
-                    {globalStats?.zeroPk.toFixed(3)} <span className="text-[10px] text-gray-600">{unit}</span>
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-gray-500">A95 Pk-Pk</span>
-                  <span className="font-mono text-sm text-white">
-                    {globalStats?.a95.toFixed(3)} <span className="text-[10px] text-gray-600">{unit}</span>
-                  </span>
-                </div>
-              </div>
-              <div className="mt-3 text-[10px] text-gray-500 leading-tight">
-                *Pk-Pk calc via Zero-Crossing method (Appendix A). Amber dots on chart show Max Pk-Pk pair.
-              </div>
-            </div>
-
-            {/* Window Controls */}
+            {/* 3. Window Controls */}
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">
-                FFT Analysis Window ({windowSize}s)
+              <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
+                {t.windowControl}
               </label>
               <div className="space-y-4">
-                <div>
-                  <div className="flex justify-between text-xs text-gray-400 mb-1">
-                    <span>Start: {windowStart.toFixed(2)}s</span>
-                    <span>End: {(windowStart + windowSize).toFixed(2)}s</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={maxTime - windowSize}
-                    step={0.1}
-                    value={windowStart}
-                    onChange={(e) => setWindowStart(Number(e.target.value))}
-                    className="w-full h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-teal-500"
-                  />
+                <input
+                  type="range"
+                  min={0}
+                  max={maxTime - windowSize}
+                  step={0.1}
+                  value={windowStart}
+                  onChange={(e) => setWindowStart(Number(e.target.value))}
+                  className={`w-full h-2 rounded-lg appearance-none cursor-pointer ${theme.bgCard}`}
+                />
+                <div className="flex justify-between text-xs font-mono">
+                  <span>{windowStart.toFixed(2)}s</span>
+                  <span>{(windowStart + windowSize).toFixed(2)}s</span>
                 </div>
                 <div className="flex gap-2">
                    {[1, 2, 4, 8].map(ws => (
@@ -259,8 +364,8 @@ const App: React.FC = () => {
                       onClick={() => setWindowSize(ws)}
                       className={`flex-1 py-1 text-xs rounded border ${
                         windowSize === ws 
-                          ? 'border-teal-500/50 bg-teal-500/10 text-teal-400' 
-                          : 'border-gray-700 text-gray-500 hover:border-gray-600'
+                          ? `${theme.border} ${theme.accent} font-bold bg-opacity-10` 
+                          : `${theme.border} ${theme.textSecondary}`
                       }`}
                      >
                        {ws}s
@@ -270,155 +375,190 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Window Stats Card */}
-            <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50 backdrop-blur-sm">
-              <h3 className="text-xs font-bold text-gray-400 uppercase mb-4">Window Analysis</h3>
-              
-              <div className="grid grid-cols-1 gap-y-4">
-                <div>
-                  <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">Window RMS</div>
-                  <div className="text-lg font-mono text-white">
-                    {windowStats?.rms.toFixed(3)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">Dominant Freq</div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-mono text-teal-400 font-bold">
-                      {peakFreq?.freq.toFixed(2)}
-                    </span>
-                    <span className="text-sm text-gray-400">Hz</span>
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Mag: {peakFreq?.mag.toFixed(4)}
-                  </div>
-                </div>
-              </div>
+            {/* 4. Height Control */}
+            <div>
+              <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
+                 {t.chartHeight} ({chartHeight}px)
+              </label>
+              <input 
+                type="range" min="200" max="600" step="50" 
+                value={chartHeight} onChange={(e) => setChartHeight(Number(e.target.value))}
+                className="w-full"
+              />
             </div>
 
-            {/* AI Analysis Button */}
-            <div>
+             {/* 5. AI Analysis */}
+             <div>
               <button
                 onClick={handleRunAI}
                 disabled={isAnalyzing || !process.env.API_KEY}
                 className={`w-full py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-all ${
                   isAnalyzing 
                     ? 'bg-gray-800 text-gray-400 cursor-wait'
-                    : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20'
+                    : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
                 }`}
               >
-                {isAnalyzing ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    AI Diagnostics
-                  </>
-                )}
+                {isAnalyzing ? t.analyzing : t.aiDiag}
               </button>
-              {!process.env.API_KEY && (
-                <p className="text-[10px] text-center text-gray-600 mt-2">API Key not configured in env</p>
+              
+              {aiResult && (
+                <div className={`mt-4 rounded-xl p-4 border ${theme.border} ${theme.bgCard}`}>
+                   <div className={`text-xs font-bold uppercase mb-2 ${
+                     aiResult.status === 'safe' ? 'text-green-500' : 'text-yellow-500'
+                   }`}>{aiResult.status}</div>
+                   <p className={`text-xs ${theme.textSecondary}`}>{aiResult.summary}</p>
+                </div>
               )}
             </div>
 
-            {/* AI Result Display */}
-            {aiResult && (
-              <div className={`rounded-xl p-4 border backdrop-blur-sm ${
-                aiResult.status === 'safe' ? 'bg-green-900/20 border-green-800' :
-                aiResult.status === 'danger' ? 'bg-red-900/20 border-red-800' :
-                'bg-yellow-900/20 border-yellow-800'
-              }`}>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`w-2 h-2 rounded-full ${
-                    aiResult.status === 'safe' ? 'bg-green-500' :
-                    aiResult.status === 'danger' ? 'bg-red-500' :
-                    'bg-yellow-500'
-                  }`}></div>
-                  <span className="text-xs font-bold uppercase tracking-wider">{aiResult.status}</span>
-                </div>
-                <p className="text-xs text-gray-300 leading-relaxed mb-3">
-                  {aiResult.summary}
-                </p>
-                <ul className="space-y-1">
-                  {aiResult.recommendations.map((rec, i) => (
-                    <li key={i} className="text-[10px] text-gray-400 flex items-start gap-1.5">
-                      <span className="mt-0.5 text-gray-600">•</span>
-                      {rec}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         </aside>
 
-        {/* Main Content: Charts */}
-        <div className="flex-1 flex flex-col min-w-0 bg-gray-950 relative">
-           {/* Grid Background */}
-           <div className="absolute inset-0 opacity-[0.03] pointer-events-none" 
-             style={{ 
-               backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
-               backgroundSize: '40px 40px'
-             }}>
-           </div>
-
-           <div className="flex-1 flex flex-col p-4 gap-4 h-full">
-              {/* Top: Time Domain */}
-              <div className="flex-1 bg-gray-900/50 border border-gray-800 rounded-xl p-4 flex flex-col min-h-0 relative overflow-hidden group">
-                <div className="flex justify-between items-center mb-2">
-                  <h2 className="text-sm font-bold text-gray-400 flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-sm" style={{backgroundColor: colors[selectedAxis]}}></span>
-                    GLOBAL TIME DOMAIN
+        {/* --- MAIN CHARTS AREA --- */}
+        <div className="flex-1 flex flex-col p-6 gap-6 overflow-y-auto min-w-0">
+            
+            {/* 1. VIBRATION CHART (Moved to Top) */}
+            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
+              <div className="flex justify-between items-center mb-4 shrink-0">
+                <div className="flex items-center gap-4">
+                  <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
+                    <span className="w-2 h-2 rounded-sm" style={{backgroundColor: theme.chartColors[accelAxis]}}></span>
+                    {t.vibration}
                   </h2>
-                  <div className="flex items-center gap-4">
-                    <span className="text-[10px] text-teal-500 bg-teal-500/10 px-2 py-1 rounded border border-teal-500/20">
-                      Tip: Use bottom slider to Zoom/Pan
-                    </span>
-                    <span className="text-xs text-gray-600 font-mono">Unit: {unit}</span>
+                  <div className={`flex rounded border ${theme.border} p-0.5`}>
+                    {['ax', 'ay', 'az'].map((ax) => (
+                      <button 
+                        key={ax} 
+                        onClick={() => setAccelAxis(ax as DataAxis)}
+                        className={`px-2 py-0.5 text-xs font-bold rounded ${
+                          accelAxis === ax ? `bg-gray-500/20 ${theme.textPrimary}` : theme.textSecondary
+                        }`}
+                      >
+                        {ax.toUpperCase()}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <div className="flex-1 min-h-0 cursor-crosshair relative">
-                  <TimeChart 
-                    data={displayData} 
-                    axis={selectedAxis} 
-                    color={colors[selectedAxis]}
-                    windowRange={{ start: windowStart, end: windowStart + windowSize }}
-                    referenceLines={currentRefLines}
-                    onChartClick={handleChartClick}
-                    globalStats={globalStats}
-                  />
-                </div>
-              </div>
 
-              {/* Bottom: Frequency Domain */}
-              <div className="flex-1 bg-gray-900/50 border border-gray-800 rounded-xl p-4 flex flex-col min-h-0">
-                <div className="flex justify-between items-center mb-2">
-                  <h2 className="text-sm font-bold text-gray-400 flex items-center gap-2">
-                     <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                       <path d="M21 12V7H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14" />
-                       <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
-                       <path d="M18 12c0-2.2-1.8-4-4-4s-4 1.8-4 4 1.8 4 4 4 4-1.8 4-4Z" />
-                     </svg>
-                     FFT ANALYSIS (WINDOWED)
-                  </h2>
-                  <span className="text-xs text-gray-600 font-mono">Range: 1-200Hz</span>
-                </div>
-                <div className="flex-1 min-h-0">
-                  <FFTChart 
-                    data={fftData} 
-                    color={colors[selectedAxis]} 
+                <div className="flex items-center gap-2">
+                   {/* Ref Lines Selector */}
+                   <div className="flex items-center gap-1">
+                     <span className={`text-[10px] ${theme.textSecondary}`}>{t.refLines}</span>
+                     <select 
+                       value={refLineLevel || 0}
+                       onChange={(e) => setRefLineLevel(Number(e.target.value) || null)}
+                       className={`text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                     >
+                       <option value="0">Off</option>
+                       <option value="10">±10</option>
+                       <option value="15">±15</option>
+                     </select>
+                   </div>
+                  
+                  <span className={`text-[10px] ${theme.textSecondary} ml-2`}>{t.yScale}</span>
+                  <input 
+                    placeholder="Min" 
+                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                    value={yMinAccel} onChange={(e) => setYMinAccel(e.target.value)}
+                  />
+                  <input 
+                    placeholder="Max" 
+                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                    value={yMaxAccel} onChange={(e) => setYMaxAccel(e.target.value)}
                   />
                 </div>
               </div>
-           </div>
+              
+              <div className="flex-1 min-h-0">
+                <TimeChart 
+                  data={displayData} 
+                  axis={accelAxis} 
+                  color={theme.chartColors[accelAxis]}
+                  syncId="timeSync"
+                  windowRange={{ start: windowStart, end: windowStart + windowSize }}
+                  onChartClick={handleChartClick}
+                  globalStats={globalStats}
+                  referenceLines={refLineLevel ? [refLineLevel, -refLineLevel] : undefined}
+                  yDomain={parseDomain(yMinAccel, yMaxAccel)}
+                  gridColor={theme.gridColor}
+                  textColor={theme.textSecondary.replace('text-', '')}
+                  brushColor={theme.brushColor}
+                />
+              </div>
+            </div>
+
+            {/* 2. FFT CHART (Moved to Middle) */}
+            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
+              <div className="flex justify-between items-center mb-4 shrink-0">
+                <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
+                    {t.fft} ({accelAxis.toUpperCase()})
+                </h2>
+                <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}: {peakFreq?.freq.toFixed(2)}Hz</span>
+              </div>
+              <div className="flex-1 min-h-0">
+                <FFTChart 
+                  data={fftData} 
+                  color={theme.chartColors[accelAxis]} 
+                  gridColor={theme.gridColor}
+                  textColor={theme.textSecondary.replace('text-', '')}
+                />
+              </div>
+            </div>
+
+            {/* 3. KINEMATICS CHART (Moved to Bottom) */}
+            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
+              <div className="flex justify-between items-center mb-4 shrink-0">
+                <div className="flex items-center gap-4">
+                  <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
+                    <span className="w-2 h-2 rounded-sm" style={{backgroundColor: theme.chartColors[intAxis]}}></span>
+                    {t.kinematics}
+                  </h2>
+                  <div className={`flex rounded border ${theme.border} p-0.5`}>
+                    {['vz', 'sz'].map((ax) => (
+                      <button 
+                        key={ax} 
+                        onClick={() => setIntAxis(ax as DataAxis)}
+                        className={`px-2 py-0.5 text-xs font-bold rounded ${
+                          intAxis === ax ? `bg-gray-500/20 ${theme.textPrimary}` : theme.textSecondary
+                        }`}
+                      >
+                        {ax.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] ${theme.textSecondary}`}>{t.yScale}</span>
+                  <input 
+                    placeholder="Min" 
+                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                    value={yMinInt} onChange={(e) => setYMinInt(e.target.value)}
+                  />
+                  <input 
+                    placeholder="Max" 
+                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                    value={yMaxInt} onChange={(e) => setYMaxInt(e.target.value)}
+                  />
+                </div>
+              </div>
+              
+              <div className="flex-1 min-h-0">
+                <TimeChart 
+                  data={displayData} 
+                  axis={intAxis} 
+                  color={theme.chartColors[intAxis]}
+                  syncId="timeSync"
+                  windowRange={{ start: windowStart, end: windowStart + windowSize }}
+                  onChartClick={handleChartClick}
+                  yDomain={parseDomain(yMinInt, yMaxInt)}
+                  gridColor={theme.gridColor}
+                  textColor={theme.textSecondary.replace('text-', '')}
+                  brushColor={theme.brushColor}
+                />
+              </div>
+            </div>
+
         </div>
       </main>
     </div>

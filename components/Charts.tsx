@@ -1,17 +1,10 @@
+
 import React from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, ReferenceArea, ReferenceLine, Brush, Label, ReferenceDot
 } from 'recharts';
 import { FFTResult, ProcessedDataPoint, DataAxis, AnalysisStats } from '../types';
-
-const THEME_COLORS = {
-  ax: '#ef4444', // Red
-  ay: '#22c55e', // Green
-  az: '#3b82f6', // Blue
-  vz: '#a855f7', // Purple
-  sz: '#f97316', // Orange
-};
 
 interface TimeChartProps {
   data: ProcessedDataPoint[];
@@ -22,6 +15,10 @@ interface TimeChartProps {
   referenceLines?: number[]; // Values like [10, -10]
   onChartClick?: (time: number) => void;
   globalStats?: AnalysisStats | null;
+  yDomain?: [number | 'auto', number | 'auto'];
+  gridColor?: string;
+  textColor?: string;
+  brushColor?: string;
 }
 
 const formatScientificIfNeeded = (val: number) => {
@@ -40,7 +37,11 @@ export const TimeChart: React.FC<TimeChartProps> = ({
   windowRange,
   referenceLines,
   onChartClick,
-  globalStats
+  globalStats,
+  yDomain = ['auto', 'auto'],
+  gridColor = "#374151",
+  textColor = "#9ca3af",
+  brushColor = "#9ca3af"
 }) => {
   const unit = axis.startsWith('a') ? 'Gals' : axis === 'vz' ? 'm/s' : 'm';
 
@@ -57,34 +58,35 @@ export const TimeChart: React.FC<TimeChartProps> = ({
           }}
           margin={{ top: 10, right: 30, left: 10, bottom: 5 }}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} opacity={0.3} />
           <XAxis 
             dataKey="time" 
             type="number" 
             domain={['dataMin', 'dataMax']} 
             hide={false} 
-            stroke="#6b7280"
+            stroke={textColor}
             fontSize={10}
             tickFormatter={(val) => val.toFixed(1) + 's'}
             minTickGap={50}
           />
           <YAxis 
-            stroke="#9ca3af" 
+            stroke={textColor} 
             fontSize={11} 
             tickFormatter={formatScientificIfNeeded}
-            domain={['auto', 'auto']}
+            domain={yDomain}
             width={60}
+            allowDataOverflow={true}
           >
              <Label 
                value={unit} 
                angle={-90} 
                position="insideLeft" 
-               style={{ textAnchor: 'middle', fill: '#6b7280', fontSize: 10 }} 
+               style={{ textAnchor: 'middle', fill: textColor, fontSize: 10 }} 
              />
           </YAxis>
           <Tooltip 
-            contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#fff' }}
-            labelStyle={{ color: '#9ca3af' }}
+            contentStyle={{ backgroundColor: 'rgba(17, 24, 39, 0.9)', border: `1px solid ${gridColor}`, color: '#fff' }}
+            labelStyle={{ color: textColor }}
             itemStyle={{ color: color }}
             formatter={(value: number) => [formatScientificIfNeeded(value), axis.toUpperCase()]}
             labelFormatter={(label) => `Time: ${Number(label).toFixed(3)}s`}
@@ -95,16 +97,16 @@ export const TimeChart: React.FC<TimeChartProps> = ({
             stroke={color} 
             strokeWidth={1.5} 
             dot={false} 
-            isAnimationActive={false} // Performance
+            isAnimationActive={false} 
           />
           {windowRange && (
             <ReferenceArea 
               x1={windowRange.start} 
               x2={windowRange.end} 
-              fill="#14b8a6" // Teal-500
-              fillOpacity={0.15}
-              stroke="#14b8a6"
-              strokeOpacity={0.5}
+              fill={color} 
+              fillOpacity={0.1}
+              stroke={color}
+              strokeOpacity={0.3}
             />
           )}
           {referenceLines && referenceLines.map((val, idx) => (
@@ -113,51 +115,42 @@ export const TimeChart: React.FC<TimeChartProps> = ({
              </ReferenceLine>
           ))}
           
-          {/* Marker for Max 0-Pk (Absolute Max) */}
           {globalStats?.max0PkPoint && (
             <ReferenceDot 
               x={globalStats.max0PkPoint.time} 
               y={globalStats.max0PkPoint.value} 
               r={5} 
               fill="transparent"
-              stroke="#fff" 
+              stroke={textColor}
               strokeWidth={2}
               strokeDasharray="3 3"
-            >
-              {/* Just a dot for 0-pk, label is in sidebar to avoid clutter */}
-            </ReferenceDot>
+            />
           )}
 
-          {/* Markers for Max Pk-Pk Pair (The two peaks forming the max Pk-Pk) */}
           {globalStats?.maxPkPkPair && (
             <>
               <ReferenceDot 
                 x={globalStats.maxPkPkPair[0].time} 
                 y={globalStats.maxPkPkPair[0].value} 
                 r={4} 
-                fill="#fbbf24" // Amber
+                fill="#fbbf24" 
                 stroke="none"
               />
               <ReferenceDot 
                 x={globalStats.maxPkPkPair[1].time} 
                 y={globalStats.maxPkPkPair[1].value} 
                 r={4} 
-                fill="#fbbf24" // Amber
+                fill="#fbbf24" 
                 stroke="none"
               />
-              {/* Connecting Line Visual (Simulated by dots or rely on eye) 
-                  Note: Recharts doesn't support arbitrary lines easily without data, 
-                  so we just mark the two peaks.
-              */}
             </>
           )}
 
-          {/* Brush for Zooming and Panning */}
           <Brush 
             dataKey="time" 
             height={30} 
-            stroke="#4b5563"
-            fill="#1f2937"
+            stroke={brushColor}
+            fill="rgba(255,255,255,0.05)"
             tickFormatter={(val) => typeof val === 'number' ? val.toFixed(1) : val}
           />
         </LineChart>
@@ -169,37 +162,44 @@ export const TimeChart: React.FC<TimeChartProps> = ({
 interface FFTChartProps {
   data: FFTResult[];
   color: string;
+  gridColor?: string;
+  textColor?: string;
 }
 
-export const FFTChart: React.FC<FFTChartProps> = ({ data, color }) => {
+export const FFTChart: React.FC<FFTChartProps> = ({ 
+  data, 
+  color,
+  gridColor = "#374151",
+  textColor = "#9ca3af"
+}) => {
   return (
     <div className="h-full w-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
           <defs>
-            <linearGradient id="colorSplit" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={`colorSplit-${color}`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor={color} stopOpacity={0.8}/>
               <stop offset="95%" stopColor={color} stopOpacity={0}/>
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} opacity={0.3} />
           <XAxis 
             dataKey="frequency" 
             type="number" 
-            stroke="#9ca3af" 
+            stroke={textColor} 
             fontSize={11}
             tickCount={10}
-            label={{ value: 'Frequency (Hz)', position: 'insideBottom', offset: -5, fill: '#6b7280' }}
+            label={{ value: 'Frequency (Hz)', position: 'insideBottom', offset: -5, fill: textColor }}
           />
           <YAxis 
-            stroke="#9ca3af" 
+            stroke={textColor} 
             fontSize={11}
             tickFormatter={formatScientificIfNeeded}
             width={50}
           />
           <Tooltip 
-            cursor={{stroke: '#fff', strokeWidth: 1, strokeDasharray: '3 3'}}
-            contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', color: '#fff' }}
+            cursor={{stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3'}}
+            contentStyle={{ backgroundColor: 'rgba(17, 24, 39, 0.9)', border: `1px solid ${gridColor}`, color: '#fff' }}
             formatter={(value: number) => [value.toFixed(4), 'Magnitude']}
             labelFormatter={(label) => `Freq: ${Number(label).toFixed(2)}Hz`}
           />
@@ -208,7 +208,7 @@ export const FFTChart: React.FC<FFTChartProps> = ({ data, color }) => {
             dataKey="magnitude" 
             stroke={color} 
             fillOpacity={1} 
-            fill="url(#colorSplit)" 
+            fill={`url(#colorSplit-${color})`} 
             isAnimationActive={false}
           />
         </AreaChart>
