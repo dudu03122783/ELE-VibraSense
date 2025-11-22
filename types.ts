@@ -55,7 +55,8 @@ export interface ThemeConfig {
   border: string;
   accent: string;
   gridColor: string;
-  brushColor: string; // Added for visibility
+  brushColor: string;
+  textColorHex: string; // Explicit Hex for SVG/Charts
   chartColors: {
     ax: string;
     ay: string;
@@ -63,4 +64,12 @@ export interface ThemeConfig {
     vz: string;
     sz: string;
   };
+}
+
+export interface FilterConfig {
+  enabled: boolean;
+  highPassFreq: number; // Hz
+  lowPassFreq: number; // Hz
+  isStandardWeighting: boolean; // Just a UI flag
+  targetAxes: 'all' | 'z-only'; // Selective filtering
 }

@@ -2,9 +2,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import FileUpload from './components/FileUpload';
 import { TimeChart, FFTChart } from './components/Charts';
-import { calculateFFT, calculateStats, downsampleData } from './utils/mathUtils';
+import { calculateFFT, calculateStats, downsampleData, parseCSV, processVibrationData } from './utils/mathUtils';
+import { applyFilters } from './utils/dspUtils';
 import { analyzeWithGemini } from './services/geminiService';
-import { ProcessedDataPoint, DataAxis, AnalysisStats, AIAnalysisResult, ThemeConfig } from './types';
+import { ProcessedDataPoint, DataAxis, AnalysisStats, AIAnalysisResult, ThemeConfig, FilterConfig, RawDataPoint } from './types';
 
 const SAMPLE_RATE = 1600;
 
@@ -31,11 +32,20 @@ const TRANSLATIONS = {
     maxPkPk: '最大峰峰值 (Max Pk-Pk)',
     max0Pk: '最大单峰值 (Max 0-Pk)',
     a95: 'A95 峰峰值',
-    rms: '有效值 (RMS)',
+    rms: '时间平均计权值 (aw)',
     peak: '峰值 (Peak)',
     dragDrop: '拖拽或点击上传',
     supports: '支持 .csv 格式 (包含 ax, ay, az 列)',
-    systemInfo: '系统将自动通过积分计算速度(Vz)和位移(Sz)'
+    systemInfo: '系统将自动通过积分计算速度(Vz)和位移(Sz)',
+    dsp: '信号处理 / 滤波器',
+    enableFilter: '启用滤波',
+    highPass: '高通 (Hz)',
+    lowPass: '低通 (Hz)',
+    presetIso: 'GB/T 24474 (10Hz)',
+    presetDefault: '复位 (全通)',
+    target: '目标',
+    targetAll: '所有轴',
+    targetZ: '仅 Z 轴'
   },
   en: {
     title: 'VIBRASENSE.AI',
@@ -58,11 +68,20 @@ const TRANSLATIONS = {
     maxPkPk: 'Max Pk-Pk',
     max0Pk: 'Max 0-Pk',
     a95: 'A95 Pk-Pk',
-    rms: 'RMS',
+    rms: 'Time-Averaged Weighted (aw)',
     peak: 'Peak',
     dragDrop: 'Drag & Drop or Click to Upload',
     supports: 'Supports .csv (ax, ay, az)',
-    systemInfo: 'The system will automatically calculate Velocity (Vz) and Displacement (Sz) via integration.'
+    systemInfo: 'The system will automatically calculate Velocity (Vz) and Displacement (Sz) via integration.',
+    dsp: 'Signal Processing / Filters',
+    enableFilter: 'Enable Filtering',
+    highPass: 'High Pass (Hz)',
+    lowPass: 'Low Pass (Hz)',
+    presetIso: 'GB/T 24474 (10Hz)',
+    presetDefault: 'Reset',
+    target: 'Target',
+    targetAll: 'All Axes',
+    targetZ: 'Z-Axis Only'
   }
 };
 
@@ -70,7 +89,7 @@ const TRANSLATIONS = {
 const THEMES: ThemeConfig[] = [
   {
     id: 'midnight',
-    name: 'Midnight (Default)',
+    name: 'Midnight',
     bgApp: 'bg-gray-950',
     bgCard: 'bg-gray-900/50',
     bgPanel: 'bg-gray-900',
@@ -79,12 +98,13 @@ const THEMES: ThemeConfig[] = [
     border: 'border-gray-800',
     accent: 'text-teal-400',
     gridColor: '#374151',
-    brushColor: '#6b7280', // Lighter gray for better visibility
+    brushColor: '#6b7280',
+    textColorHex: '#9ca3af', // gray-400
     chartColors: { ax: '#ef4444', ay: '#22c55e', az: '#3b82f6', vz: '#a855f7', sz: '#f97316' }
   },
   {
     id: 'antigravity',
-    name: 'Antigravity',
+    name: 'Antigravity (Default)',
     bgApp: 'bg-slate-950',
     bgCard: 'bg-slate-900/80',
     bgPanel: 'bg-slate-900',
@@ -94,6 +114,7 @@ const THEMES: ThemeConfig[] = [
     accent: 'text-fuchsia-400',
     gridColor: '#475569',
     brushColor: '#cbd5e1',
+    textColorHex: '#cbd5e1', // slate-300 - High visibility on dark
     chartColors: { ax: '#f472b6', ay: '#4ade80', az: '#22d3ee', vz: '#c084fc', sz: '#fbbf24' }
   },
   {
@@ -108,6 +129,7 @@ const THEMES: ThemeConfig[] = [
     accent: 'text-blue-600',
     gridColor: '#e5e7eb',
     brushColor: '#6b7280',
+    textColorHex: '#374151', // gray-700
     chartColors: { ax: '#dc2626', ay: '#16a34a', az: '#2563eb', vz: '#7c3aed', sz: '#d97706' }
   }
 ];
@@ -118,17 +140,27 @@ const App: React.FC = () => {
   const t = TRANSLATIONS[lang];
 
   // Data State
-  const [data, setData] = useState<ProcessedDataPoint[] | null>(null);
+  const [rawData, setRawData] = useState<RawDataPoint[] | null>(null);
   const [fileName, setFileName] = useState<string>("");
   const [displayData, setDisplayData] = useState<ProcessedDataPoint[]>([]);
+  const [finalProcessedData, setFinalProcessedData] = useState<ProcessedDataPoint[] | null>(null);
 
-  // Theme State
-  const [currentThemeId, setCurrentThemeId] = useState<string>('midnight');
+  // DSP State
+  const [filterConfig, setFilterConfig] = useState<FilterConfig>({
+    enabled: false,
+    highPassFreq: 0,
+    lowPassFreq: 80,
+    isStandardWeighting: false,
+    targetAxes: 'all'
+  });
+
+  // Theme State - Default to Antigravity
+  const [currentThemeId, setCurrentThemeId] = useState<string>('antigravity');
   const theme = useMemo(() => THEMES.find(t => t.id === currentThemeId) || THEMES[0], [currentThemeId]);
 
   // Axis Selection State
-  const [accelAxis, setAccelAxis] = useState<DataAxis>('az'); // AX, AY, AZ
-  const [intAxis, setIntAxis] = useState<DataAxis>('vz'); // VZ, SZ
+  const [accelAxis, setAccelAxis] = useState<DataAxis>('az');
+  const [intAxis, setIntAxis] = useState<DataAxis>('vz');
 
   // Y-Axis Control State
   const [yMinAccel, setYMinAccel] = useState<string>('');
@@ -146,34 +178,53 @@ const App: React.FC = () => {
   // Analysis State
   const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [refLineLevel, setRefLineLevel] = useState<number | null>(null); // null, 10, 15
+  const [refLineLevel, setRefLineLevel] = useState<number | null>(null);
 
-  // Downsampling Effect
+  // --- DATA PIPELINE ---
+  const handleFileLoad = (processed: ProcessedDataPoint[], name: string) => {
+    // Treat initial load as Raw
+    const raw: RawDataPoint[] = processed.map(p => ({ time: p.time, ax: p.ax, ay: p.ay, az: p.az }));
+    setRawData(raw);
+    setFileName(name);
+  };
+
   useEffect(() => {
-    if (data) {
-      setDisplayData(downsampleData(data, 8000));
+    if (!rawData) return;
+
+    let dataToProcess = rawData;
+
+    // Apply DSP if enabled
+    if (filterConfig.enabled) {
+      dataToProcess = applyFilters(rawData, SAMPLE_RATE, filterConfig);
+    }
+
+    // Integrate
+    const processed = processVibrationData(dataToProcess, SAMPLE_RATE);
+    setFinalProcessedData(processed);
+
+  }, [rawData, filterConfig]);
+
+  useEffect(() => {
+    if (finalProcessedData) {
+      setDisplayData(downsampleData(finalProcessedData, 8000));
     } else {
       setDisplayData([]);
     }
-  }, [data]);
+  }, [finalProcessedData]);
 
   // --- COMPUTED DATA ---
-
-  // 1. Current Window Slice (for FFT and Local Stats)
   const currentWindowData = useMemo(() => {
-    if (!data) return [];
+    if (!finalProcessedData) return [];
     const startIndex = Math.floor(windowStart * SAMPLE_RATE);
     const endIndex = Math.floor((windowStart + windowSize) * SAMPLE_RATE);
-    return data.slice(startIndex, Math.min(endIndex, data.length));
-  }, [data, windowStart, windowSize]);
+    return finalProcessedData.slice(startIndex, Math.min(endIndex, finalProcessedData.length));
+  }, [finalProcessedData, windowStart, windowSize]);
 
-  // 2. Global Stats for ACCELERATION Axis
   const globalStats = useMemo(() => {
-    if (!data) return null;
-    return calculateStats(data, accelAxis);
-  }, [data, accelAxis]);
+    if (!finalProcessedData) return null;
+    return calculateStats(finalProcessedData, accelAxis);
+  }, [finalProcessedData, accelAxis]);
 
-  // 3. FFT Data & Window Stats
   const { fftData, windowStats, peakFreq } = useMemo(() => {
     if (currentWindowData.length === 0) return { fftData: [], windowStats: null, peakFreq: null };
 
@@ -193,7 +244,6 @@ const App: React.FC = () => {
   }, [currentWindowData, accelAxis]);
 
   // --- HANDLERS ---
-
   const handleRunAI = async () => {
     if (!windowStats || !peakFreq) return;
     setIsAnalyzing(true);
@@ -203,8 +253,8 @@ const App: React.FC = () => {
   };
 
   const handleChartClick = (clickedTime: number) => {
-    if (!data) return;
-    const maxStart = data[data.length - 1].time - windowSize;
+    if (!finalProcessedData) return;
+    const maxStart = finalProcessedData[finalProcessedData.length - 1].time - windowSize;
     let newStart = clickedTime - (windowSize / 2);
     if (newStart < 0) newStart = 0;
     if (newStart > maxStart) newStart = maxStart;
@@ -217,16 +267,35 @@ const App: React.FC = () => {
     return [pMin, pMax];
   };
 
-  if (!data) {
+  const applyIsoPreset = () => {
+    setFilterConfig({
+      enabled: true,
+      highPassFreq: 0,
+      lowPassFreq: 10,
+      isStandardWeighting: true,
+      targetAxes: 'z-only' // ISO 18738 / GB/T 24474 focus on Z for ride quality
+    });
+  };
+
+  const resetFilters = () => {
+    setFilterConfig({
+      enabled: false,
+      highPassFreq: 0,
+      lowPassFreq: 80,
+      isStandardWeighting: false,
+      targetAxes: 'all'
+    });
+  };
+
+  if (!finalProcessedData) {
     return (
       <div className={`min-h-screen ${theme.bgApp} flex flex-col relative overflow-hidden`}>
-        {/* Simple Language Switcher on Landing */}
         <div className="absolute top-4 right-4 z-50">
           <button onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} className="text-white bg-gray-800 px-3 py-1 rounded text-sm border border-gray-700">
             {lang === 'zh' ? 'EN' : '中文'}
           </button>
         </div>
-        <FileUpload onDataLoaded={(d, name) => { setData(d); setFileName(name); }} />
+        <FileUpload onDataLoaded={handleFileLoad} />
         <div className="absolute bottom-8 text-center w-full text-gray-500 text-xs">
            <p>{t.dragDrop}</p>
            <p>{t.systemInfo}</p>
@@ -235,7 +304,7 @@ const App: React.FC = () => {
     );
   }
 
-  const maxTime = data[data.length - 1].time;
+  const maxTime = finalProcessedData[finalProcessedData.length - 1].time;
 
   return (
     <div className={`min-h-screen ${theme.bgApp} ${theme.textPrimary} font-sans flex flex-col overflow-y-auto`}>
@@ -252,18 +321,13 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-4">
-            
-            {/* Language */}
             <button 
               onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
               className={`text-xs font-bold px-2 py-1 rounded border ${theme.border} ${theme.textPrimary} hover:bg-white/5`}
             >
               {lang === 'zh' ? 'EN' : '中文'}
             </button>
-
             <div className="h-4 w-px bg-gray-600"></div>
-
-            {/* Theme Selector */}
             <div className="flex items-center gap-2">
               <span className={`text-xs uppercase font-bold ${theme.textSecondary}`}>{t.theme}</span>
               <select 
@@ -274,11 +338,9 @@ const App: React.FC = () => {
                 {THEMES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
-
             <div className="h-4 w-px bg-gray-600"></div>
-
             <button 
-              onClick={() => setData(null)}
+              onClick={() => { setRawData(null); setFinalProcessedData(null); }}
               className={`text-sm ${theme.textSecondary} hover:${theme.textPrimary} transition-colors`}
             >
               {t.close}
@@ -288,11 +350,82 @@ const App: React.FC = () => {
       </header>
 
       <main className="flex-1 flex flex-col lg:flex-row">
-        {/* --- LEFT SIDEBAR (CONTROLS & STATS) --- */}
+        {/* --- LEFT SIDEBAR --- */}
         <aside className={`w-full lg:w-80 ${theme.bgPanel} border-r ${theme.border} flex flex-col z-40 shrink-0`}>
           <div className="p-6 space-y-6 sticky top-0">
             
-            {/* 1. Global Stats Panel */}
+            {/* DSP Panel */}
+            <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase flex items-center gap-2`}>
+                  <span className={`w-1.5 h-1.5 rounded-full bg-blue-500`}></span>
+                  {t.dsp}
+                </h3>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <span className="text-[10px] font-bold">{t.enableFilter}</span>
+                  <input 
+                    type="checkbox" 
+                    checked={filterConfig.enabled}
+                    onChange={(e) => setFilterConfig({...filterConfig, enabled: e.target.checked})}
+                    className="rounded border-gray-600 bg-gray-800"
+                  />
+                </label>
+              </div>
+              
+              <div className={`space-y-3 ${!filterConfig.enabled ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] text-gray-500 block mb-1">{t.highPass}</label>
+                    <input 
+                      type="number" 
+                      value={filterConfig.highPassFreq}
+                      onChange={(e) => setFilterConfig({...filterConfig, highPassFreq: Number(e.target.value)})}
+                      className={`w-full text-xs p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] text-gray-500 block mb-1">{t.lowPass}</label>
+                    <input 
+                      type="number" 
+                      value={filterConfig.lowPassFreq}
+                      onChange={(e) => setFilterConfig({...filterConfig, lowPassFreq: Number(e.target.value)})}
+                      className={`w-full text-xs p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                     <label className="text-[10px] text-gray-500 block mb-1">{t.target}</label>
+                     <select 
+                       value={filterConfig.targetAxes}
+                       onChange={(e) => setFilterConfig({...filterConfig, targetAxes: e.target.value as 'all' | 'z-only'})}
+                       className={`w-full text-xs p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                     >
+                       <option value="all">{t.targetAll}</option>
+                       <option value="z-only">{t.targetZ}</option>
+                     </select>
+                  </div>
+                </div>
+                
+                <div className="flex gap-2 pt-1">
+                   <button 
+                     onClick={applyIsoPreset}
+                     className={`flex-1 py-1 px-2 text-[10px] rounded border ${theme.border} hover:bg-white/10 ${filterConfig.isStandardWeighting && filterConfig.enabled ? theme.accent : ''}`}
+                   >
+                     {t.presetIso}
+                   </button>
+                   <button 
+                     onClick={resetFilters}
+                     className={`py-1 px-2 text-[10px] rounded border ${theme.border} hover:bg-white/10`}
+                   >
+                     {t.presetDefault}
+                   </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Global Stats */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
               <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${theme.accent.replace('text-', 'bg-')}`}></span>
@@ -307,14 +440,18 @@ const App: React.FC = () => {
                    <span className={`text-xs ${theme.textSecondary}`}>{t.max0Pk}</span>
                    <span className="font-mono text-sm">{globalStats?.zeroPk.toFixed(3)}</span>
                 </div>
-                <div className="flex justify-between items-center">
+                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
                    <span className={`text-xs ${theme.textSecondary}`}>{t.a95}</span>
                    <span className="font-mono text-sm">{globalStats?.a95.toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between items-center pt-1">
+                   <span className={`text-xs ${theme.accent} font-bold`}>{t.rms}</span>
+                   <span className={`font-mono text-sm ${theme.accent}`}>{globalStats?.rms.toFixed(3)}</span>
                 </div>
               </div>
             </div>
 
-            {/* 2. Window Stats (Restored) */}
+            {/* Window Stats & Controls */}
             {windowStats && (
               <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
                 <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
@@ -338,7 +475,6 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* 3. Window Controls */}
             <div>
               <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
                 {t.windowControl}
@@ -375,7 +511,6 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* 4. Height Control */}
             <div>
               <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
                  {t.chartHeight} ({chartHeight}px)
@@ -387,7 +522,7 @@ const App: React.FC = () => {
               />
             </div>
 
-             {/* 5. AI Analysis */}
+             {/* AI Analysis */}
              <div>
               <button
                 onClick={handleRunAI}
@@ -417,13 +552,18 @@ const App: React.FC = () => {
         {/* --- MAIN CHARTS AREA --- */}
         <div className="flex-1 flex flex-col p-6 gap-6 overflow-y-auto min-w-0">
             
-            {/* 1. VIBRATION CHART (Moved to Top) */}
+            {/* VIBRATION CHART */}
             <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex items-center gap-4">
                   <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
                     <span className="w-2 h-2 rounded-sm" style={{backgroundColor: theme.chartColors[accelAxis]}}></span>
                     {t.vibration}
+                    {filterConfig.enabled && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded ml-1">
+                        Filtered ({filterConfig.targetAxes === 'z-only' ? 'Z-Only ' : ''}{filterConfig.lowPassFreq}Hz LP)
+                      </span>
+                    )}
                   </h2>
                   <div className={`flex rounded border ${theme.border} p-0.5`}>
                     {['ax', 'ay', 'az'].map((ax) => (
@@ -441,7 +581,6 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
-                   {/* Ref Lines Selector */}
                    <div className="flex items-center gap-1">
                      <span className={`text-[10px] ${theme.textSecondary}`}>{t.refLines}</span>
                      <select 
@@ -481,13 +620,13 @@ const App: React.FC = () => {
                   referenceLines={refLineLevel ? [refLineLevel, -refLineLevel] : undefined}
                   yDomain={parseDomain(yMinAccel, yMaxAccel)}
                   gridColor={theme.gridColor}
-                  textColor={theme.textSecondary.replace('text-', '')}
+                  textColor={theme.textColorHex} // Use HEX now
                   brushColor={theme.brushColor}
                 />
               </div>
             </div>
 
-            {/* 2. FFT CHART (Moved to Middle) */}
+            {/* FFT CHART */}
             <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
@@ -500,12 +639,12 @@ const App: React.FC = () => {
                   data={fftData} 
                   color={theme.chartColors[accelAxis]} 
                   gridColor={theme.gridColor}
-                  textColor={theme.textSecondary.replace('text-', '')}
+                  textColor={theme.textColorHex} // Use HEX now
                 />
               </div>
             </div>
 
-            {/* 3. KINEMATICS CHART (Moved to Bottom) */}
+            {/* KINEMATICS CHART */}
             <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex items-center gap-4">
@@ -553,7 +692,7 @@ const App: React.FC = () => {
                   onChartClick={handleChartClick}
                   yDomain={parseDomain(yMinInt, yMaxInt)}
                   gridColor={theme.gridColor}
-                  textColor={theme.textSecondary.replace('text-', '')}
+                  textColor={theme.textColorHex} // Use HEX now
                   brushColor={theme.brushColor}
                 />
               </div>

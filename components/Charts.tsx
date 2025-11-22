@@ -12,7 +12,7 @@ interface TimeChartProps {
   color: string;
   syncId?: string;
   windowRange?: { start: number; end: number };
-  referenceLines?: number[]; // Values like [10, -10]
+  referenceLines?: number[];
   onChartClick?: (time: number) => void;
   globalStats?: AnalysisStats | null;
   yDomain?: [number | 'auto', number | 'auto'];

@@ -1,3 +1,4 @@
+
 import { ProcessedDataPoint, RawDataPoint, FFTResult, AnalysisStats, DataAxis, Point } from '../types';
 
 // Simple CSV Parser
@@ -74,6 +75,9 @@ export const processVibrationData = (rawData: RawDataPoint[], fs: number): Proce
   }
 
   // 5. Assemble Result
+  // Note: We return the "detrended" acceleration as the values to plot, 
+  // assuming filtering might have already handled some DC removal, 
+  // but doing it again here ensures the VZ/SZ integration is stable.
   for (let i = 0; i < n; i++) {
     processed[i] = {
       time: rawData[i].time,
@@ -154,7 +158,7 @@ export const calculateFFT = (data: number[], fs: number): FFTResult[] => {
   const results: FFTResult[] = [];
   for (let i = 0; i < N / 2; i++) {
     const freq = i * fs / N;
-    if (freq >= 1 && freq <= 200) {
+    if (freq >= 0.5 && freq <= 200) { // Ignore DC and very high freq
       let magnitude = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / N;
       if (i > 0) magnitude *= 2; 
       results.push({ frequency: freq, magnitude });
@@ -164,16 +168,6 @@ export const calculateFFT = (data: number[], fs: number): FFTResult[] => {
   return results;
 };
 
-/**
- * Calculates Elevator Ride Quality Metrics according to GB/T 24474 / ISO 18738 Appendix A.
- * 
- * Methodology:
- * 1. Identify Zero Crossings.
- * 2. Identify Peaks (Max Abs) between Zero Crossings.
- * 3. Calculate Pk-Pk as sum of absolute values of adjacent peaks (Peak(i) + Peak(i+1)).
- * 4. Max Pk-Pk is the maximum of these values.
- * 5. A95 is the 95th percentile of these values.
- */
 export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): AnalysisStats => {
   if (data.length === 0) {
     return { peakVal: 0, peakTime: 0, rms: 0, pkPk: 0, zeroPk: 0, a95: 0 };
@@ -200,7 +194,6 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
 
   // If not an acceleration axis, simple Max-Min is sufficient
   if (axis === 'vz' || axis === 'sz') {
-     // Fallback for non-vibration axes
      let min = Infinity, max = -Infinity;
      for(let v of values) {
        if(v < min) min = v;
@@ -212,27 +205,22 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
        rms,
        pkPk: max - min,
        zeroPk: overallMaxAbs,
-       a95: overallMaxAbs, // Not applicable really
+       a95: overallMaxAbs, 
        max0PkPoint: overallMaxPoint
      };
   }
 
   // 2. Find Zero Crossings and Peaks (Appendix A Method)
-  // A "Peak" here is the local extremum between two zero crossings.
   interface LocalPeak {
-    value: number; // Signed value
+    value: number; 
     abs: number;
     time: number;
     idx: number;
   }
 
   const peaks: LocalPeak[] = [];
-  
-  // Find indices where sign changes
-  // We assume the signal is mean-centered (which it is from processVibrationData)
   let lastZC = 0;
   
-  // Helper to find max abs in range
   const findLocalPeak = (startIdx: number, endIdx: number): LocalPeak | null => {
     if (startIdx >= endIdx) return null;
     let maxAbs = -1;
@@ -257,9 +245,7 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
     const v1 = values[i];
     const v2 = values[i+1];
     
-    // Zero Crossing detected (sign change or hit 0)
     if ((v1 >= 0 && v2 < 0) || (v1 < 0 && v2 >= 0)) {
-      // We found a region [lastZC, i]
       const peak = findLocalPeak(lastZC, i + 1);
       if (peak) {
         peaks.push(peak);
@@ -267,12 +253,10 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
       lastZC = i + 1;
     }
   }
-  // Process last segment
   const lastPeak = findLocalPeak(lastZC, data.length);
   if (lastPeak) peaks.push(lastPeak);
 
   // 3. Calculate Pk-Pk Values (Adjacent peaks)
-  // Standard implies adjacent positive and negative peaks sum
   const pkPkValues: number[] = [];
   const pkPkPairs: { val: number, p1: LocalPeak, p2: LocalPeak }[] = [];
 
@@ -280,7 +264,6 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
     const p1 = peaks[i];
     const p2 = peaks[i+1];
     
-    // Verify they are opposite signs (should be by definition of zero crossing, but good to check)
     if ((p1.value > 0 && p2.value < 0) || (p1.value < 0 && p2.value > 0)) {
       const ppVal = p1.abs + p2.abs;
       pkPkValues.push(ppVal);
@@ -289,7 +272,6 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
   }
 
   if (pkPkValues.length === 0) {
-    // Fallback if signal has no zero crossings (DC offset or flat)
     return { peakVal: overallMaxAbs, peakTime: overallMaxPoint.time, rms, pkPk: 0, zeroPk: overallMaxAbs, a95: 0 };
   }
 
@@ -300,7 +282,6 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
   for (const item of pkPkPairs) {
     if (item.val > maxPkPk) {
       maxPkPk = item.val;
-      // Order by time
       maxPkPkPair = item.p1.time < item.p2.time 
         ? [{time: item.p1.time, value: item.p1.value}, {time: item.p2.time, value: item.p2.value}]
         : [{time: item.p2.time, value: item.p2.value}, {time: item.p1.time, value: item.p1.value}];
@@ -308,7 +289,6 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
   }
 
   // 5. A95 Pk-Pk
-  // Sort numeric array
   pkPkValues.sort((a, b) => a - b);
   const index95 = Math.floor(pkPkValues.length * 0.95);
   const a95 = pkPkValues[Math.min(index95, pkPkValues.length - 1)];
@@ -325,10 +305,6 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
   };
 };
 
-/**
- * Downsamples data for visualization performance while preserving peaks.
- * Uses a Min-Max aggregation to ensure vibration spikes are visible.
- */
 export const downsampleData = (data: ProcessedDataPoint[], targetCount: number = 5000): ProcessedDataPoint[] => {
   const len = data.length;
   if (len <= targetCount) return data;
@@ -339,26 +315,18 @@ export const downsampleData = (data: ProcessedDataPoint[], targetCount: number =
   
   for (let i = 0; i < len; i += step) {
     const end = Math.min(i + step, len);
-    
     let maxAbs = -1;
     let maxIdx = i;
     
     for(let j=i; j<end; j++) {
-      // Check az (or any) magnitude for peakiness
-      // We can check max of ax/ay/az to be safe
       const val = Math.max(Math.abs(data[j].ax), Math.abs(data[j].ay), Math.abs(data[j].az));
       if (val > maxAbs) {
         maxAbs = val;
         maxIdx = j;
       }
     }
-    
-    // Always add the first point of bucket (to keep timeline linear-ish)
     result.push(data[i]);
-    // Add the peak point if it's different
-    if (maxIdx !== i) {
-      result.push(data[maxIdx]);
-    }
+    if (maxIdx !== i) result.push(data[maxIdx]);
   }
   return result;
 };
