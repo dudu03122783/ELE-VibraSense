@@ -12,15 +12,20 @@ const SAMPLE_RATE = 1600;
 // --- TRANSLATIONS ---
 const TRANSLATIONS = {
   zh: {
-    title: 'VIBRASENSE.AI',
+    title: 'MESE ELEVATOR VIBRATION ANALYSIS SYSTEM',
     upload: '上传文件',
     theme: '主题',
     close: '关闭文件',
     globalStats: '全局统计',
+    globalStatsNote: '(仅作为参考Z轴的PK-PK、0-PK计算暂时不准确)',
     windowAnalysis: '窗口分析 (FFT)',
     windowControl: '分析窗口控制',
+    viewControl: '视图 / 缩放控制',
     chartHeight: '图表高度',
     aiDiag: 'AI 智能诊断',
+    aiSettings: 'API 设置',
+    apiKeyPlaceholder: '输入 Google API Key',
+    modelPlaceholder: '模型 (默认 gemini-2.5-flash)',
     analyzing: '分析中...',
     kinematics: '运动学',
     vibration: '振动',
@@ -45,18 +50,30 @@ const TRANSLATIONS = {
     presetDefault: '复位 (全通)',
     target: '目标',
     targetAll: '所有轴',
-    targetZ: '仅 Z 轴'
+    targetZ: '仅 Z 轴',
+    creator: '制作者：chaizhh@mese-cn.com',
+    smecInfo: '请导入SMEC 便携式震动仪数据，该数据可以从钉钉工作台《智能震动测量分析》软件中下载数据',
+    viewStart: '视图起点 (s)',
+    viewEnd: '视图终点 (s)',
+    focusWindow: '聚焦分析窗口',
+    resetView: '复位视图',
+    zoomTip: '提示: 在图表上拖拽可放大',
   },
   en: {
-    title: 'VIBRASENSE.AI',
+    title: 'MESE ELEVATOR VIBRATION ANALYSIS SYSTEM',
     upload: 'Upload File',
     theme: 'Theme',
     close: 'Close File',
     globalStats: 'Global Stats',
+    globalStatsNote: '(For reference only, Z-axis data is temporarily inaccurate)',
     windowAnalysis: 'Window Analysis (FFT)',
     windowControl: 'Analysis Window',
+    viewControl: 'View / Zoom Control',
     chartHeight: 'Chart Height',
     aiDiag: 'AI Diagnostics',
+    aiSettings: 'API Settings',
+    apiKeyPlaceholder: 'Enter Google API Key',
+    modelPlaceholder: 'Model (default gemini-2.5-flash)',
     analyzing: 'Analyzing...',
     kinematics: 'KINEMATICS',
     vibration: 'VIBRATION',
@@ -81,7 +98,14 @@ const TRANSLATIONS = {
     presetDefault: 'Reset',
     target: 'Target',
     targetAll: 'All Axes',
-    targetZ: 'Z-Axis Only'
+    targetZ: 'Z-Axis Only',
+    creator: 'Created by: chaizhh@mese-cn.com',
+    smecInfo: 'Please import SMEC portable vibrometer data (download from DingTalk Smart Vibration Analysis app).',
+    viewStart: 'View Start (s)',
+    viewEnd: 'View End (s)',
+    focusWindow: 'Focus Window',
+    resetView: 'Reset View',
+    zoomTip: 'Tip: Drag on chart to zoom',
   }
 };
 
@@ -149,7 +173,7 @@ const App: React.FC = () => {
   const [filterConfig, setFilterConfig] = useState<FilterConfig>({
     enabled: false,
     highPassFreq: 0,
-    lowPassFreq: 80,
+    lowPassFreq: 30, // Changed default to 30Hz as requested
     isStandardWeighting: false,
     targetAxes: 'all'
   });
@@ -168,10 +192,13 @@ const App: React.FC = () => {
   const [yMinInt, setYMinInt] = useState<string>('');
   const [yMaxInt, setYMaxInt] = useState<string>('');
   
+  // View / Zoom State
+  const [viewDomain, setViewDomain] = useState<[number, number] | null>(null);
+  
   // Chart Height State
   const [chartHeight, setChartHeight] = useState<number>(350);
 
-  // Windowing State
+  // Windowing State (Analysis)
   const [windowStart, setWindowStart] = useState<number>(0);
   const [windowSize, setWindowSize] = useState<number>(4);
   
@@ -179,6 +206,11 @@ const App: React.FC = () => {
   const [aiResult, setAiResult] = useState<AIAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [refLineLevel, setRefLineLevel] = useState<number | null>(null);
+
+  // AI Settings State
+  const [userApiKey, setUserApiKey] = useState<string>('');
+  const [userModelName, setUserModelName] = useState<string>('');
+  const [showAiSettings, setShowAiSettings] = useState(false);
 
   // --- DATA PIPELINE ---
   const handleFileLoad = (processed: ProcessedDataPoint[], name: string) => {
@@ -206,6 +238,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (finalProcessedData) {
+      // If file changes or data re-processed, we might want to reset zoom or keep it if within bounds
       setDisplayData(downsampleData(finalProcessedData, 8000));
     } else {
       setDisplayData([]);
@@ -247,7 +280,13 @@ const App: React.FC = () => {
   const handleRunAI = async () => {
     if (!windowStats || !peakFreq) return;
     setIsAnalyzing(true);
-    const result = await analyzeWithGemini({ ...windowStats, axis: accelAxis }, peakFreq);
+    // Pass user settings if available
+    const result = await analyzeWithGemini(
+      { ...windowStats, axis: accelAxis }, 
+      peakFreq,
+      userApiKey,
+      userModelName
+    );
     setAiResult(result);
     setIsAnalyzing(false);
   };
@@ -259,6 +298,19 @@ const App: React.FC = () => {
     if (newStart < 0) newStart = 0;
     if (newStart > maxStart) newStart = maxStart;
     setWindowStart(newStart);
+  };
+  
+  const handleZoom = (left: number, right: number) => {
+    if (left === right) return;
+    setViewDomain([left, right]);
+  };
+  
+  const resetView = () => {
+    setViewDomain(null);
+  };
+
+  const focusWindow = () => {
+    setViewDomain([windowStart, windowStart + windowSize]);
   };
 
   const parseDomain = (min: string, max: string): [number | 'auto', number | 'auto'] => {
@@ -281,7 +333,7 @@ const App: React.FC = () => {
     setFilterConfig({
       enabled: false,
       highPassFreq: 0,
-      lowPassFreq: 80,
+      lowPassFreq: 30, // Reset to 30Hz
       isStandardWeighting: false,
       targetAxes: 'all'
     });
@@ -296,15 +348,18 @@ const App: React.FC = () => {
           </button>
         </div>
         <FileUpload onDataLoaded={handleFileLoad} />
-        <div className="absolute bottom-8 text-center w-full text-gray-500 text-xs">
-           <p>{t.dragDrop}</p>
-           <p>{t.systemInfo}</p>
+        <div className="absolute bottom-8 text-center w-full text-gray-500 text-xs px-4">
+           <p className="mb-1">{t.dragDrop}</p>
+           <p className="mb-3">{t.systemInfo}</p>
+           <p className="text-gray-400 opacity-80 max-w-lg mx-auto leading-relaxed">{t.smecInfo}</p>
         </div>
       </div>
     );
   }
 
   const maxTime = finalProcessedData[finalProcessedData.length - 1].time;
+  const currentViewStart = viewDomain ? viewDomain[0] : 0;
+  const currentViewEnd = viewDomain ? viewDomain[1] : maxTime;
 
   return (
     <div className={`min-h-screen ${theme.bgApp} ${theme.textPrimary} font-sans flex flex-col overflow-y-auto`}>
@@ -313,8 +368,8 @@ const App: React.FC = () => {
       <header className={`border-b ${theme.border} ${theme.bgCard} backdrop-blur-md sticky top-0 z-50`}>
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-mono font-bold tracking-tighter">
-              VIBRA<span className={theme.accent}>SENSE</span>.AI
+            <h1 className="text-lg font-mono font-bold tracking-tight">
+              MESE <span className={theme.accent}>ELEVATOR</span> VIBRATION ANALYSIS SYSTEM
             </h1>
             <div className="h-4 w-px bg-gray-600"></div>
             <span className={`text-sm ${theme.textSecondary} font-mono`}>{fileName}</span>
@@ -376,6 +431,9 @@ const App: React.FC = () => {
                 <div className="flex justify-between items-center pt-1">
                    <span className={`text-xs ${theme.accent} font-bold`}>{t.rms}</span>
                    <span className={`font-mono text-sm ${theme.accent}`}>{globalStats?.rms.toFixed(3)}</span>
+                </div>
+                <div className="text-[10px] text-yellow-500 mt-2 opacity-80 italic">
+                  {t.globalStatsNote}
                 </div>
               </div>
             </div>
@@ -441,7 +499,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* 4. DSP Panel (Moved Here) */}
+            {/* 4. DSP (Signal Processing) */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
               <div className="flex justify-between items-center mb-3">
                 <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase flex items-center gap-2`}>
@@ -512,7 +570,66 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* 5. Chart Height */}
+            {/* 5. View / Zoom Control */}
+             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
+              <div className="flex justify-between items-center mb-3">
+                 <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase flex items-center gap-2`}>
+                  <span className={`w-1.5 h-1.5 rounded-full bg-green-500`}></span>
+                  {t.viewControl}
+                </h3>
+              </div>
+              <div className="space-y-3">
+                 <div className="flex gap-2">
+                   <div className="flex-1">
+                      <label className="text-[10px] text-gray-500 block mb-1">{t.viewStart}</label>
+                      <input 
+                        type="number"
+                        min="0"
+                        max={maxTime}
+                        step="0.1"
+                        value={currentViewStart.toFixed(2)}
+                        onChange={(e) => {
+                           const val = Number(e.target.value);
+                           setViewDomain([val, Math.max(val + 0.1, currentViewEnd)]);
+                        }}
+                        className={`w-full text-xs p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                      />
+                   </div>
+                   <div className="flex-1">
+                      <label className="text-[10px] text-gray-500 block mb-1">{t.viewEnd}</label>
+                      <input 
+                        type="number"
+                        min="0"
+                        max={maxTime}
+                        step="0.1"
+                        value={currentViewEnd.toFixed(2)}
+                        onChange={(e) => {
+                           const val = Number(e.target.value);
+                           setViewDomain([Math.min(val - 0.1, currentViewStart), val]);
+                        }}
+                        className={`w-full text-xs p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                      />
+                   </div>
+                 </div>
+                 <div className="flex gap-2">
+                    <button 
+                       onClick={focusWindow}
+                       className={`flex-1 py-1 px-2 text-[10px] rounded border ${theme.border} hover:bg-white/10`}
+                    >
+                      {t.focusWindow}
+                    </button>
+                    <button 
+                       onClick={resetView}
+                       className={`flex-1 py-1 px-2 text-[10px] rounded border ${theme.border} hover:bg-white/10`}
+                    >
+                      {t.resetView}
+                    </button>
+                 </div>
+                 <p className="text-[10px] text-gray-500 italic text-center">{t.zoomTip}</p>
+              </div>
+            </div>
+
+            {/* 6. Chart Height */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
               <label className={`text-xs font-bold ${theme.textSecondary} uppercase tracking-wider mb-3 block`}>
                  {t.chartHeight} ({chartHeight}px)
@@ -524,11 +641,11 @@ const App: React.FC = () => {
               />
             </div>
 
-             {/* 6. AI Analysis */}
+             {/* 7. AI Analysis */}
              <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
               <button
                 onClick={handleRunAI}
-                disabled={isAnalyzing || !process.env.API_KEY}
+                disabled={isAnalyzing}
                 className={`w-full py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-all ${
                   isAnalyzing 
                     ? 'bg-gray-800 text-gray-400 cursor-wait'
@@ -538,6 +655,34 @@ const App: React.FC = () => {
                 {isAnalyzing ? t.analyzing : t.aiDiag}
               </button>
               
+              <div className="mt-3">
+                <button 
+                  onClick={() => setShowAiSettings(!showAiSettings)}
+                  className={`text-[10px] flex items-center gap-1 ${theme.textSecondary} hover:${theme.textPrimary}`}
+                >
+                   <span className="text-xs">{showAiSettings ? '▼' : '►'}</span> {t.aiSettings}
+                </button>
+                
+                {showAiSettings && (
+                  <div className={`mt-2 p-2 rounded bg-black/20 border ${theme.border} space-y-2`}>
+                    <input 
+                      type="password"
+                      placeholder={t.apiKeyPlaceholder}
+                      value={userApiKey}
+                      onChange={(e) => setUserApiKey(e.target.value)}
+                      className={`w-full text-[10px] p-1.5 rounded border ${theme.border} bg-transparent ${theme.textPrimary} focus:border-${theme.accent.split('-')[1]}`}
+                    />
+                    <input 
+                      type="text"
+                      placeholder={t.modelPlaceholder}
+                      value={userModelName}
+                      onChange={(e) => setUserModelName(e.target.value)}
+                      className={`w-full text-[10px] p-1.5 rounded border ${theme.border} bg-transparent ${theme.textPrimary} focus:border-${theme.accent.split('-')[1]}`}
+                    />
+                  </div>
+                )}
+              </div>
+
               {aiResult && (
                 <div className={`mt-4 pt-4 border-t ${theme.border}`}>
                    <div className={`text-xs font-bold uppercase mb-2 ${
@@ -546,6 +691,11 @@ const App: React.FC = () => {
                    <p className={`text-xs ${theme.textSecondary}`}>{aiResult.summary}</p>
                 </div>
               )}
+            </div>
+
+            {/* 8. Creator Info */}
+            <div className="mt-4 text-[10px] text-center text-gray-500 font-mono">
+              {t.creator}
             </div>
 
           </div>
@@ -621,8 +771,10 @@ const App: React.FC = () => {
                   globalStats={globalStats}
                   referenceLines={refLineLevel ? [refLineLevel, -refLineLevel] : undefined}
                   yDomain={parseDomain(yMinAccel, yMaxAccel)}
+                  xDomain={viewDomain || undefined}
+                  onZoom={handleZoom}
                   gridColor={theme.gridColor}
-                  textColor={theme.textColorHex} // Use HEX now
+                  textColor={theme.textColorHex} 
                   brushColor={theme.brushColor}
                 />
               </div>
@@ -641,7 +793,7 @@ const App: React.FC = () => {
                   data={fftData} 
                   color={theme.chartColors[accelAxis]} 
                   gridColor={theme.gridColor}
-                  textColor={theme.textColorHex} // Use HEX now
+                  textColor={theme.textColorHex} 
                 />
               </div>
             </div>
@@ -693,8 +845,10 @@ const App: React.FC = () => {
                   windowRange={{ start: windowStart, end: windowStart + windowSize }}
                   onChartClick={handleChartClick}
                   yDomain={parseDomain(yMinInt, yMaxInt)}
+                  xDomain={viewDomain || undefined}
+                  onZoom={handleZoom}
                   gridColor={theme.gridColor}
-                  textColor={theme.textColorHex} // Use HEX now
+                  textColor={theme.textColorHex} 
                   brushColor={theme.brushColor}
                 />
               </div>

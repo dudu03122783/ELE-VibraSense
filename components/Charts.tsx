@@ -1,8 +1,8 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  AreaChart, Area, ReferenceArea, ReferenceLine, Brush, Label, ReferenceDot
+  AreaChart, Area, ReferenceArea, ReferenceLine, Label, ReferenceDot
 } from 'recharts';
 import { FFTResult, ProcessedDataPoint, DataAxis, AnalysisStats } from '../types';
 
@@ -16,17 +16,16 @@ interface TimeChartProps {
   onChartClick?: (time: number) => void;
   globalStats?: AnalysisStats | null;
   yDomain?: [number | 'auto', number | 'auto'];
+  xDomain?: [number, number]; // New prop for Zoom control
+  onZoom?: (left: number, right: number) => void; // Callback for zoom
   gridColor?: string;
   textColor?: string;
   brushColor?: string;
 }
 
-const formatScientificIfNeeded = (val: number) => {
-  if (val === 0) return "0";
-  if (Math.abs(val) < 0.001) {
-    return val.toExponential(2);
-  }
-  return val.toFixed(3);
+const formatYAxis = (val: number) => {
+  if (val === 0) return "0.00";
+  return val.toFixed(2);
 };
 
 export const TimeChart: React.FC<TimeChartProps> = ({ 
@@ -39,30 +38,64 @@ export const TimeChart: React.FC<TimeChartProps> = ({
   onChartClick,
   globalStats,
   yDomain = ['auto', 'auto'],
+  xDomain,
+  onZoom,
   gridColor = "#374151",
   textColor = "#9ca3af",
   brushColor = "#9ca3af"
 }) => {
   const unit = axis.startsWith('a') ? 'Gals' : axis === 'vz' ? 'm/s' : 'm';
 
+  // Internal state for drag-to-zoom interaction
+  const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
+  const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
+
+  const handleMouseDown = (e: any) => {
+    if (e && e.activeLabel) {
+      setRefAreaLeft(Number(e.activeLabel));
+    }
+  };
+
+  const handleMouseMove = (e: any) => {
+    if (refAreaLeft !== null && e && e.activeLabel) {
+      setRefAreaRight(Number(e.activeLabel));
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (refAreaLeft !== null && refAreaRight !== null && onZoom) {
+      const [left, right] = [refAreaLeft, refAreaRight].sort((a, b) => a - b);
+      if (right > left) {
+        onZoom(left, right);
+      }
+    }
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  };
+
   return (
-    <div className="h-full w-full relative">
+    <div className="h-full w-full relative select-none">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart 
           data={data} 
           syncId={syncId}
+          onMouseDown={onZoom ? handleMouseDown : undefined}
+          onMouseMove={onZoom ? handleMouseMove : undefined}
+          onMouseUp={onZoom ? handleMouseUp : undefined}
           onClick={(e) => {
-            if (onChartClick && e && e.activeLabel) {
+            // Only trigger click if we weren't dragging (zooming)
+            if (!refAreaLeft && onChartClick && e && e.activeLabel) {
               onChartClick(Number(e.activeLabel));
             }
           }}
-          margin={{ top: 10, right: 30, left: 10, bottom: 5 }}
+          margin={{ top: 10, right: 40, left: 10, bottom: 5 }}
         >
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} opacity={0.3} />
           <XAxis 
             dataKey="time" 
             type="number" 
-            domain={['dataMin', 'dataMax']} 
+            domain={xDomain || ['dataMin', 'dataMax']} 
+            allowDataOverflow={true}
             hide={false} 
             stroke={textColor}
             fontSize={10}
@@ -71,24 +104,24 @@ export const TimeChart: React.FC<TimeChartProps> = ({
           />
           <YAxis 
             stroke={textColor} 
-            fontSize={11} 
-            tickFormatter={formatScientificIfNeeded}
-            domain={yDomain}
+            fontSize={13} // Increased font size
+            tickFormatter={formatYAxis}
             width={60}
             allowDataOverflow={true}
+            domain={yDomain}
           >
              <Label 
                value={unit} 
                angle={-90} 
                position="insideLeft" 
-               style={{ textAnchor: 'middle', fill: textColor, fontSize: 10 }} 
+               style={{ textAnchor: 'middle', fill: textColor, fontSize: 12 }} 
              />
           </YAxis>
           <Tooltip 
             contentStyle={{ backgroundColor: 'rgba(17, 24, 39, 0.9)', border: `1px solid ${gridColor}`, color: '#fff' }}
             labelStyle={{ color: textColor }}
             itemStyle={{ color: color }}
-            formatter={(value: number) => [formatScientificIfNeeded(value), axis.toUpperCase()]}
+            formatter={(value: number) => [formatYAxis(value), axis.toUpperCase()]}
             labelFormatter={(label) => `Time: ${Number(label).toFixed(3)}s`}
           />
           <Line 
@@ -99,6 +132,8 @@ export const TimeChart: React.FC<TimeChartProps> = ({
             dot={false} 
             isAnimationActive={false} 
           />
+          
+          {/* Analysis Window Highlight */}
           {windowRange && (
             <ReferenceArea 
               x1={windowRange.start} 
@@ -107,8 +142,21 @@ export const TimeChart: React.FC<TimeChartProps> = ({
               fillOpacity={0.1}
               stroke={color}
               strokeOpacity={0.3}
+              ifOverflow="extendDomain"
             />
           )}
+
+          {/* Zoom Selection Highlight */}
+          {refAreaLeft !== null && refAreaRight !== null && (
+            <ReferenceArea 
+              x1={refAreaLeft} 
+              x2={refAreaRight} 
+              strokeOpacity={0.3} 
+              fill={textColor}
+              fillOpacity={0.3} 
+            />
+          )}
+
           {referenceLines && referenceLines.map((val, idx) => (
              <ReferenceLine key={idx} y={val} stroke="#ef4444" strokeDasharray="3 3" opacity={0.7}>
                <Label value={val.toString()} position="right" fill="#ef4444" fontSize={10} />
@@ -124,6 +172,7 @@ export const TimeChart: React.FC<TimeChartProps> = ({
               stroke={textColor}
               strokeWidth={2}
               strokeDasharray="3 3"
+              ifOverflow="hidden" // Hide if outside current zoom
             />
           )}
 
@@ -135,6 +184,7 @@ export const TimeChart: React.FC<TimeChartProps> = ({
                 r={4} 
                 fill="#fbbf24" 
                 stroke="none"
+                ifOverflow="hidden"
               />
               <ReferenceDot 
                 x={globalStats.maxPkPkPair[1].time} 
@@ -142,17 +192,10 @@ export const TimeChart: React.FC<TimeChartProps> = ({
                 r={4} 
                 fill="#fbbf24" 
                 stroke="none"
+                ifOverflow="hidden"
               />
             </>
           )}
-
-          <Brush 
-            dataKey="time" 
-            height={30} 
-            stroke={brushColor}
-            fill="rgba(255,255,255,0.05)"
-            tickFormatter={(val) => typeof val === 'number' ? val.toFixed(1) : val}
-          />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -193,8 +236,8 @@ export const FFTChart: React.FC<FFTChartProps> = ({
           />
           <YAxis 
             stroke={textColor} 
-            fontSize={11}
-            tickFormatter={formatScientificIfNeeded}
+            fontSize={12} 
+            tickFormatter={formatYAxis}
             width={50}
           />
           <Tooltip 

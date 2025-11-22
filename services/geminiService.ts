@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 
 const SYSTEM_INSTRUCTION = `
@@ -22,11 +23,17 @@ Provide a concise assessment:
 
 export const analyzeWithGemini = async (
   stats: any, 
-  fftPeak: { freq: number, mag: number }
+  fftPeak: { freq: number, mag: number },
+  userApiKey?: string,
+  userModelName?: string
 ): Promise<any> => {
   try {
-    const apiKey = process.env.API_KEY;
+    // Prefer user provided key, then env
+    const apiKey = userApiKey || process.env.API_KEY;
     if (!apiKey) throw new Error("API Key missing");
+
+    // Prefer user model, default to standard default
+    const modelName = userModelName && userModelName.trim() !== '' ? userModelName : 'gemini-2.5-flash';
 
     const ai = new GoogleGenAI({ apiKey });
 
@@ -41,7 +48,7 @@ export const analyzeWithGemini = async (
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: modelName,
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
@@ -65,8 +72,8 @@ export const analyzeWithGemini = async (
     console.error("Gemini Analysis Failed", error);
     return {
       status: 'unknown',
-      summary: "AI Analysis unavailable.",
-      recommendations: ["Check local data manually."]
+      summary: "AI Analysis unavailable. Check API Key.",
+      recommendations: ["Check network connection", "Verify API Key"]
     };
   }
 };

@@ -1,5 +1,5 @@
 {
-  "name": "VibraSense AI",
+  "name": "MESE Vibration Analysis",
   "description": "A high-performance, interactive elevator vibration analysis platform. Features real-time time-domain integration, sliding window FFT frequency analysis, and AI-powered anomaly detection using Google Gemini.",
   "requestFramePermissions": []
 }
