@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import FileUpload from './components/FileUpload';
 import { TimeChart, FFTChart } from './components/Charts';
 import { calculateFFT, calculateStats, downsampleData, parseCSV, processVibrationData } from './utils/mathUtils';
@@ -33,6 +33,7 @@ const TRANSLATIONS = {
     yScale: 'Y轴范围',
     refLines: '参考线',
     dominant: '主频',
+    magnitude: '幅值',
     unitAccel: 'Gals',
     maxPkPk: '最大峰峰值 (Max Pk-Pk)',
     max0Pk: '最大单峰值 (Max 0-Pk)',
@@ -58,6 +59,14 @@ const TRANSLATIONS = {
     focusWindow: '聚焦分析窗口',
     resetView: '复位视图',
     zoomTip: '提示: 在图表上拖拽可放大',
+    toggleSidebar: '侧边栏',
+    export: '导出/打印',
+    exportTitle: '导出选项',
+    selectCharts: '选择图表',
+    selectAll: '全选',
+    print: '打印',
+    saveImage: '保存图片',
+    cancel: '取消',
   },
   en: {
     title: 'MESE ELEVATOR VIBRATION ANALYSIS SYSTEM',
@@ -81,6 +90,7 @@ const TRANSLATIONS = {
     yScale: 'Y-SCALE',
     refLines: 'Ref Lines',
     dominant: 'Dominant',
+    magnitude: 'Magnitude',
     unitAccel: 'Gals',
     maxPkPk: 'Max Pk-Pk',
     max0Pk: 'Max 0-Pk',
@@ -106,6 +116,14 @@ const TRANSLATIONS = {
     focusWindow: 'Focus Window',
     resetView: 'Reset View',
     zoomTip: 'Tip: Drag on chart to zoom',
+    toggleSidebar: 'Sidebar',
+    export: 'Export/Print',
+    exportTitle: 'Export Options',
+    selectCharts: 'Select Charts',
+    selectAll: 'Select All',
+    print: 'Print',
+    saveImage: 'Save Image',
+    cancel: 'Cancel',
   }
 };
 
@@ -173,7 +191,7 @@ const App: React.FC = () => {
   const [filterConfig, setFilterConfig] = useState<FilterConfig>({
     enabled: false,
     highPassFreq: 0,
-    lowPassFreq: 30, // Changed default to 30Hz as requested
+    lowPassFreq: 30,
     isStandardWeighting: false,
     targetAxes: 'all'
   });
@@ -212,6 +230,12 @@ const App: React.FC = () => {
   const [userModelName, setUserModelName] = useState<string>('');
   const [showAiSettings, setShowAiSettings] = useState(false);
 
+  // UI Toggle State
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportSelection, setExportSelection] = useState({ vibration: true, fft: true, kinematics: true });
+  const chartsContainerRef = useRef<HTMLDivElement>(null);
+
   // --- DATA PIPELINE ---
   const handleFileLoad = (processed: ProcessedDataPoint[], name: string) => {
     // Treat initial load as Raw
@@ -238,7 +262,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (finalProcessedData) {
-      // If file changes or data re-processed, we might want to reset zoom or keep it if within bounds
       setDisplayData(downsampleData(finalProcessedData, 8000));
     } else {
       setDisplayData([]);
@@ -280,7 +303,6 @@ const App: React.FC = () => {
   const handleRunAI = async () => {
     if (!windowStats || !peakFreq) return;
     setIsAnalyzing(true);
-    // Pass user settings if available
     const result = await analyzeWithGemini(
       { ...windowStats, axis: accelAxis }, 
       peakFreq,
@@ -325,7 +347,7 @@ const App: React.FC = () => {
       highPassFreq: 0,
       lowPassFreq: 10,
       isStandardWeighting: true,
-      targetAxes: 'z-only' // ISO 18738 / GB/T 24474 focus on Z for ride quality
+      targetAxes: 'z-only'
     });
   };
 
@@ -333,10 +355,39 @@ const App: React.FC = () => {
     setFilterConfig({
       enabled: false,
       highPassFreq: 0,
-      lowPassFreq: 30, // Reset to 30Hz
+      lowPassFreq: 30,
       isStandardWeighting: false,
       targetAxes: 'all'
     });
+  };
+
+  // Export Handlers
+  const handlePrint = () => {
+    setShowExportModal(false);
+    window.print();
+  };
+
+  const handleSaveImage = async () => {
+    if (!chartsContainerRef.current || !(window as any).html2canvas) return;
+    
+    setShowExportModal(false);
+    // Temporarily hide sidebar for clean capture if needed, 
+    // but we are targeting the container.
+    
+    try {
+      const canvas = await (window as any).html2canvas(chartsContainerRef.current, {
+        backgroundColor: theme.bgApp.includes('950') ? '#030712' : '#f3f4f6',
+        scale: 2 // Higher resolution
+      });
+      const data = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.href = data;
+      link.download = `${fileName}_analysis.png`;
+      link.click();
+    } catch (e) {
+      console.error("Image generation failed", e);
+      alert("Could not save image.");
+    }
   };
 
   if (!finalProcessedData) {
@@ -365,9 +416,16 @@ const App: React.FC = () => {
     <div className={`min-h-screen ${theme.bgApp} ${theme.textPrimary} font-sans flex flex-col overflow-y-auto`}>
       
       {/* --- HEADER --- */}
-      <header className={`border-b ${theme.border} ${theme.bgCard} backdrop-blur-md sticky top-0 z-50`}>
+      <header className={`border-b ${theme.border} ${theme.bgCard} backdrop-blur-md sticky top-0 z-50 print:hidden`}>
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className={`p-1 rounded hover:bg-white/10 ${theme.textSecondary}`}
+              title={t.toggleSidebar}
+            >
+               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </button>
             <h1 className="text-lg font-mono font-bold tracking-tight">
               MESE <span className={theme.accent}>ELEVATOR</span> VIBRATION ANALYSIS SYSTEM
             </h1>
@@ -376,6 +434,14 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-4">
+            <button 
+               onClick={() => setShowExportModal(true)}
+               className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-bold border ${theme.border} hover:bg-white/10`}
+            >
+               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+               {t.export}
+            </button>
+            <div className="h-4 w-px bg-gray-600"></div>
             <button 
               onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
               className={`text-xs font-bold px-2 py-1 rounded border ${theme.border} ${theme.textPrimary} hover:bg-white/5`}
@@ -404,10 +470,55 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row">
+      {/* --- EXPORT MODAL --- */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm print:hidden">
+          <div className={`${theme.bgPanel} border ${theme.border} rounded-xl shadow-2xl p-6 w-80`}>
+            <h3 className="text-lg font-bold mb-4">{t.exportTitle}</h3>
+            <div className="space-y-3 mb-6">
+               <label className="flex items-center gap-2 cursor-pointer">
+                 <input 
+                   type="checkbox" 
+                   checked={exportSelection.vibration} 
+                   onChange={e => setExportSelection({...exportSelection, vibration: e.target.checked})}
+                 />
+                 <span className="text-sm">{t.vibration}</span>
+               </label>
+               <label className="flex items-center gap-2 cursor-pointer">
+                 <input 
+                   type="checkbox" 
+                   checked={exportSelection.fft} 
+                   onChange={e => setExportSelection({...exportSelection, fft: e.target.checked})}
+                 />
+                 <span className="text-sm">{t.fft}</span>
+               </label>
+               <label className="flex items-center gap-2 cursor-pointer">
+                 <input 
+                   type="checkbox" 
+                   checked={exportSelection.kinematics} 
+                   onChange={e => setExportSelection({...exportSelection, kinematics: e.target.checked})}
+                 />
+                 <span className="text-sm">{t.kinematics}</span>
+               </label>
+            </div>
+            <div className="space-y-2">
+              <button onClick={handlePrint} className={`w-full py-2 rounded font-bold ${theme.bgCard} border ${theme.border} hover:bg-white/5`}>{t.print}</button>
+              <button onClick={handleSaveImage} className={`w-full py-2 rounded font-bold bg-teal-600 hover:bg-teal-500 text-white`}>{t.saveImage}</button>
+              <button onClick={() => setShowExportModal(false)} className={`w-full py-2 rounded text-sm ${theme.textSecondary} hover:text-white`}>{t.cancel}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <main className="flex-1 flex flex-col lg:flex-row relative">
         {/* --- LEFT SIDEBAR --- */}
-        <aside className={`w-full lg:w-80 ${theme.bgPanel} border-r ${theme.border} flex flex-col z-40 shrink-0`}>
-          <div className="p-6 space-y-6 sticky top-0">
+        <aside 
+          className={`
+            ${isSidebarOpen ? 'w-full lg:w-80 translate-x-0' : 'w-0 -translate-x-full hidden'} 
+            ${theme.bgPanel} border-r ${theme.border} flex flex-col z-40 shrink-0 transition-all duration-300 print:hidden
+          `}
+        >
+          <div className="p-6 space-y-6 sticky top-0 h-screen overflow-y-auto pb-20">
             
             {/* 1. Global Stats */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
@@ -454,9 +565,14 @@ const App: React.FC = () => {
                      <span className={`text-xs ${theme.textSecondary}`}>{t.peak}</span>
                      <span className="font-mono text-sm">{windowStats.peakVal.toFixed(3)}</span>
                    </div>
-                   <div className="flex justify-between items-center">
+                   <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
                      <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}</span>
                      <span className="font-mono text-sm text-yellow-500">{peakFreq?.freq.toFixed(2)} Hz</span>
+                   </div>
+                   {/* ADDED: Magnitude Display */}
+                   <div className="flex justify-between items-center pt-1">
+                     <span className={`text-xs ${theme.textSecondary}`}>{t.magnitude}</span>
+                     <span className="font-mono text-sm">{peakFreq?.mag.toFixed(4)}</span>
                    </div>
                 </div>
               </div>
@@ -702,9 +818,10 @@ const App: React.FC = () => {
         </aside>
 
         {/* --- MAIN CHARTS AREA --- */}
-        <div className="flex-1 flex flex-col p-6 gap-6 overflow-y-auto min-w-0">
+        <div ref={chartsContainerRef} className="flex-1 flex flex-col p-6 gap-6 overflow-y-auto min-w-0 print:w-full">
             
             {/* VIBRATION CHART */}
+            {exportSelection.vibration && (
             <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex items-center gap-4">
@@ -717,7 +834,7 @@ const App: React.FC = () => {
                       </span>
                     )}
                   </h2>
-                  <div className={`flex rounded border ${theme.border} p-0.5`}>
+                  <div className={`flex rounded border ${theme.border} p-0.5 print:hidden`}>
                     {['ax', 'ay', 'az'].map((ax) => (
                       <button 
                         key={ax} 
@@ -732,7 +849,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 print:hidden">
                    <div className="flex items-center gap-1">
                      <span className={`text-[10px] ${theme.textSecondary}`}>{t.refLines}</span>
                      <select 
@@ -779,8 +896,10 @@ const App: React.FC = () => {
                 />
               </div>
             </div>
+            )}
 
             {/* FFT CHART */}
+            {exportSelection.fft && (
             <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
@@ -797,8 +916,10 @@ const App: React.FC = () => {
                 />
               </div>
             </div>
+            )}
 
             {/* KINEMATICS CHART */}
+            {exportSelection.kinematics && (
             <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex items-center gap-4">
@@ -806,7 +927,7 @@ const App: React.FC = () => {
                     <span className="w-2 h-2 rounded-sm" style={{backgroundColor: theme.chartColors[intAxis]}}></span>
                     {t.kinematics}
                   </h2>
-                  <div className={`flex rounded border ${theme.border} p-0.5`}>
+                  <div className={`flex rounded border ${theme.border} p-0.5 print:hidden`}>
                     {['vz', 'sz'].map((ax) => (
                       <button 
                         key={ax} 
@@ -821,7 +942,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 print:hidden">
                   <span className={`text-[10px] ${theme.textSecondary}`}>{t.yScale}</span>
                   <input 
                     placeholder="Min" 
@@ -853,6 +974,7 @@ const App: React.FC = () => {
                 />
               </div>
             </div>
+            )}
 
         </div>
       </main>
