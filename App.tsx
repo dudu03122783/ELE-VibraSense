@@ -58,6 +58,7 @@ const TRANSLATIONS = {
     viewEnd: '视图终点 (s)',
     focusWindow: '聚焦分析窗口',
     resetView: '复位视图',
+    resetLayout: '重置布局 (显示FFT)',
     zoomTip: '提示: 在图表上拖拽可放大',
     toggleSidebar: '侧边栏',
     export: '导出/打印',
@@ -67,6 +68,8 @@ const TRANSLATIONS = {
     print: '打印',
     saveImage: '保存图片',
     cancel: '取消',
+    showChart: '显示图表',
+    hideChart: '隐藏图表',
   },
   en: {
     title: 'MESE ELEVATOR VIBRATION ANALYSIS SYSTEM',
@@ -115,6 +118,7 @@ const TRANSLATIONS = {
     viewEnd: 'View End (s)',
     focusWindow: 'Focus Window',
     resetView: 'Reset View',
+    resetLayout: 'Reset Layout (Show FFT)',
     zoomTip: 'Tip: Drag on chart to zoom',
     toggleSidebar: 'Sidebar',
     export: 'Export/Print',
@@ -124,6 +128,8 @@ const TRANSLATIONS = {
     print: 'Print',
     saveImage: 'Save Image',
     cancel: 'Cancel',
+    showChart: 'Show Chart',
+    hideChart: 'Hide Chart',
   }
 };
 
@@ -161,18 +167,34 @@ const THEMES: ThemeConfig[] = [
   },
   {
     id: 'engineering',
-    name: 'Engineering',
-    bgApp: 'bg-gray-100',
-    bgCard: 'bg-white shadow-sm',
-    bgPanel: 'bg-white',
-    textPrimary: 'text-gray-900',
+    name: 'Engineering (Warm)',
+    // Pale yellow / Warm tones
+    bgApp: 'bg-[#fefce8]', // yellow-50
+    bgCard: 'bg-[#fffbeb]', // amber-50/warm white mixture
+    bgPanel: 'bg-[#fcfbf7]', 
+    textPrimary: 'text-stone-800', // Warm gray/brown
+    textSecondary: 'text-stone-500',
+    border: 'border-stone-300',
+    accent: 'text-amber-600',
+    gridColor: '#d6d3d1', // stone-300
+    brushColor: '#a8a29e',
+    textColorHex: '#57534e', // stone-600
+    chartColors: { ax: '#dc2626', ay: '#16a34a', az: '#2563eb', vz: '#7c3aed', sz: '#d97706' }
+  },
+  {
+    id: 'pure-white',
+    name: 'Pure White',
+    bgApp: 'bg-white',
+    bgCard: 'bg-white',
+    bgPanel: 'bg-white', 
+    textPrimary: 'text-gray-950',
     textSecondary: 'text-gray-500',
     border: 'border-gray-200',
     accent: 'text-blue-600',
-    gridColor: '#e5e7eb',
-    brushColor: '#6b7280',
+    gridColor: '#e5e7eb', // gray-200
+    brushColor: '#9ca3af',
     textColorHex: '#374151', // gray-700
-    chartColors: { ax: '#dc2626', ay: '#16a34a', az: '#2563eb', vz: '#7c3aed', sz: '#d97706' }
+    chartColors: { ax: '#ef4444', ay: '#16a34a', az: '#2563eb', vz: '#7c3aed', sz: '#d97706' }
   }
 ];
 
@@ -234,6 +256,7 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportSelection, setExportSelection] = useState({ vibration: true, fft: true, kinematics: true });
+  const [isFFTVisible, setIsFFTVisible] = useState(true); // Visibility toggle for FFT Chart
   const chartsContainerRef = useRef<HTMLDivElement>(null);
 
   // --- DATA PIPELINE ---
@@ -330,6 +353,11 @@ const App: React.FC = () => {
   const resetView = () => {
     setViewDomain(null);
   };
+  
+  const handleResetLayout = () => {
+    setIsFFTVisible(true);
+    resetView();
+  };
 
   const focusWindow = () => {
     setViewDomain([windowStart, windowStart + windowSize]);
@@ -361,6 +389,110 @@ const App: React.FC = () => {
     });
   };
 
+  // --- TOOLBAR HANDLERS ---
+  const maxTime = finalProcessedData ? finalProcessedData[finalProcessedData.length - 1].time : 0;
+
+  const handleZoomX = (direction: 'in' | 'out') => {
+    const start = viewDomain ? viewDomain[0] : 0;
+    const end = viewDomain ? viewDomain[1] : maxTime;
+    const duration = end - start;
+    if (duration <= 0) return;
+
+    const factor = 0.25; // 25% zoom
+    const change = duration * factor;
+    
+    let newStart, newEnd;
+    if (direction === 'in') {
+      newStart = start + change / 2;
+      newEnd = end - change / 2;
+    } else {
+      newStart = start - change / 2;
+      newEnd = end + change / 2;
+    }
+    // Clamping
+    if (newStart < 0) newStart = 0;
+    if (newEnd > maxTime) newEnd = maxTime;
+    if (newEnd <= newStart) return; // Safety
+
+    setViewDomain([newStart, newEnd]);
+  };
+
+  const handlePanX = (direction: 'left' | 'right') => {
+    const start = viewDomain ? viewDomain[0] : 0;
+    const end = viewDomain ? viewDomain[1] : maxTime;
+    const duration = end - start;
+    const shift = duration * 0.2; // 20% shift
+    
+    let newStart, newEnd;
+    if (direction === 'left') {
+       newStart = start - shift;
+       newEnd = end - shift;
+       if (newStart < 0) {
+         newStart = 0;
+         newEnd = duration;
+       }
+    } else {
+       newStart = start + shift;
+       newEnd = end + shift;
+       if (newEnd > maxTime) {
+         newEnd = maxTime;
+         newStart = maxTime - duration;
+       }
+    }
+    setViewDomain([newStart, newEnd]);
+  };
+  
+  const handleZoomY = (axisType: 'accel' | 'int', direction: 'in' | 'out') => {
+    const isAccel = axisType === 'accel';
+    const currentMinStr = isAccel ? yMinAccel : yMinInt;
+    const currentMaxStr = isAccel ? yMaxAccel : yMaxInt;
+    const axisKey = isAccel ? accelAxis : intAxis;
+    
+    // Determine calculation range
+    let minVal: number, maxVal: number;
+    
+    if (currentMinStr === '' || currentMaxStr === '' || isNaN(Number(currentMinStr)) || isNaN(Number(currentMaxStr))) {
+       // Auto mode: Calculate from visible data
+       const start = viewDomain ? viewDomain[0] : 0;
+       const end = viewDomain ? viewDomain[1] : maxTime;
+       const visibleData = displayData.filter(d => d.time >= start && d.time <= end);
+       if (visibleData.length === 0) return;
+       
+       const values = visibleData.map(d => d[axisKey]);
+       const vMin = Math.min(...values);
+       const vMax = Math.max(...values);
+       const vRange = vMax - vMin;
+       // Add default padding for auto
+       minVal = vMin - vRange * 0.1;
+       maxVal = vMax + vRange * 0.1;
+       if (vRange === 0) { minVal -= 1; maxVal += 1; }
+    } else {
+       minVal = Number(currentMinStr);
+       maxVal = Number(currentMaxStr);
+    }
+    
+    const range = maxVal - minVal;
+    const factor = 0.25;
+    const change = range * factor;
+    
+    let newMin, newMax;
+    if (direction === 'in') {
+      newMin = minVal + change / 2;
+      newMax = maxVal - change / 2;
+    } else {
+      newMin = minVal - change / 2;
+      newMax = maxVal + change / 2;
+    }
+    
+    if (isAccel) {
+      setYMinAccel(newMin.toFixed(3));
+      setYMaxAccel(newMax.toFixed(3));
+    } else {
+      setYMinInt(newMin.toFixed(3));
+      setYMaxInt(newMax.toFixed(3));
+    }
+  };
+
   // Export Handlers
   const handlePrint = () => {
     setShowExportModal(false);
@@ -371,13 +503,10 @@ const App: React.FC = () => {
     if (!chartsContainerRef.current || !(window as any).html2canvas) return;
     
     setShowExportModal(false);
-    // Temporarily hide sidebar for clean capture if needed, 
-    // but we are targeting the container.
-    
     try {
       const canvas = await (window as any).html2canvas(chartsContainerRef.current, {
-        backgroundColor: theme.bgApp.includes('950') ? '#030712' : '#f3f4f6',
-        scale: 2 // Higher resolution
+        backgroundColor: theme.bgApp.includes('950') ? '#030712' : (theme.id === 'engineering' ? '#fefce8' : '#ffffff'),
+        scale: 2 
       });
       const data = canvas.toDataURL('image/png');
       const link = document.createElement('a');
@@ -392,7 +521,7 @@ const App: React.FC = () => {
 
   if (!finalProcessedData) {
     return (
-      <div className={`min-h-screen ${theme.bgApp} flex flex-col relative overflow-hidden`}>
+      <div className={`h-screen w-screen ${theme.bgApp} flex flex-col relative overflow-hidden`}>
         <div className="absolute top-4 right-4 z-50">
           <button onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} className="text-white bg-gray-800 px-3 py-1 rounded text-sm border border-gray-700">
             {lang === 'zh' ? 'EN' : '中文'}
@@ -408,15 +537,14 @@ const App: React.FC = () => {
     );
   }
 
-  const maxTime = finalProcessedData[finalProcessedData.length - 1].time;
   const currentViewStart = viewDomain ? viewDomain[0] : 0;
   const currentViewEnd = viewDomain ? viewDomain[1] : maxTime;
 
   return (
-    <div className={`min-h-screen ${theme.bgApp} ${theme.textPrimary} font-sans flex flex-col overflow-y-auto`}>
+    <div className={`h-screen w-screen ${theme.bgApp} ${theme.textPrimary} font-sans flex flex-col overflow-hidden`}>
       
       {/* --- HEADER --- */}
-      <header className={`border-b ${theme.border} ${theme.bgCard} backdrop-blur-md sticky top-0 z-50 print:hidden`}>
+      <header className={`flex-none border-b ${theme.border} ${theme.bgCard} backdrop-blur-md z-50 print:hidden`}>
         <div className="px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button 
@@ -510,15 +638,15 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <main className="flex-1 flex flex-col lg:flex-row relative">
+      <main className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden relative">
         {/* --- LEFT SIDEBAR --- */}
         <aside 
           className={`
             ${isSidebarOpen ? 'w-full lg:w-80 translate-x-0' : 'w-0 -translate-x-full hidden'} 
-            ${theme.bgPanel} border-r ${theme.border} flex flex-col z-40 shrink-0 transition-all duration-300 print:hidden
+            ${theme.bgPanel} border-r ${theme.border} flex flex-col z-40 shrink-0 transition-all duration-300 print:hidden h-full overflow-y-auto
           `}
         >
-          <div className="p-6 space-y-6 sticky top-0 h-screen overflow-y-auto pb-20">
+          <div className="p-6 space-y-6 pb-20">
             
             {/* 1. Global Stats */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
@@ -552,10 +680,21 @@ const App: React.FC = () => {
             {/* 2. Window Stats & Controls (FFT) */}
             {windowStats && (
               <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
-                <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
-                  <span className={`w-1.5 h-1.5 rounded-full bg-purple-500`}></span>
-                  {t.windowAnalysis}
-                </h3>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase flex items-center gap-2`}>
+                    <span className={`w-1.5 h-1.5 rounded-full bg-purple-500`}></span>
+                    {t.windowAnalysis}
+                  </h3>
+                  {/* Re-enable FFT button if hidden */}
+                  {!isFFTVisible && (
+                    <button 
+                      onClick={() => setIsFFTVisible(true)}
+                      className="text-[10px] px-2 py-1 rounded bg-purple-600 text-white shadow hover:bg-purple-500 transition-colors font-bold"
+                    >
+                      {t.showChart}
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-2">
                    <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
                      <span className={`text-xs ${theme.textSecondary}`}>{t.rms}</span>
@@ -569,7 +708,6 @@ const App: React.FC = () => {
                      <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}</span>
                      <span className="font-mono text-sm text-yellow-500">{peakFreq?.freq.toFixed(2)} Hz</span>
                    </div>
-                   {/* ADDED: Magnitude Display */}
                    <div className="flex justify-between items-center pt-1">
                      <span className={`text-xs ${theme.textSecondary}`}>{t.magnitude}</span>
                      <span className="font-mono text-sm">{peakFreq?.mag.toFixed(4)}</span>
@@ -727,7 +865,7 @@ const App: React.FC = () => {
                       />
                    </div>
                  </div>
-                 <div className="flex gap-2">
+                 <div className="flex flex-wrap gap-2">
                     <button 
                        onClick={focusWindow}
                        className={`flex-1 py-1 px-2 text-[10px] rounded border ${theme.border} hover:bg-white/10`}
@@ -735,10 +873,10 @@ const App: React.FC = () => {
                       {t.focusWindow}
                     </button>
                     <button 
-                       onClick={resetView}
+                       onClick={handleResetLayout}
                        className={`flex-1 py-1 px-2 text-[10px] rounded border ${theme.border} hover:bg-white/10`}
                     >
-                      {t.resetView}
+                      {t.resetLayout}
                     </button>
                  </div>
                  <p className="text-[10px] text-gray-500 italic text-center">{t.zoomTip}</p>
@@ -818,11 +956,11 @@ const App: React.FC = () => {
         </aside>
 
         {/* --- MAIN CHARTS AREA --- */}
-        <div ref={chartsContainerRef} className="flex-1 flex flex-col p-6 gap-6 overflow-y-auto min-w-0 print:w-full">
+        <div ref={chartsContainerRef} className="flex-1 flex flex-col p-6 gap-6 overflow-y-auto h-full min-w-0 print:w-full print:h-auto print:overflow-visible">
             
             {/* VIBRATION CHART */}
             {exportSelection.vibration && (
-            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
+            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col shrink-0`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex items-center gap-4">
                   <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
@@ -849,7 +987,7 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 print:hidden">
+                <div className="flex items-center gap-3 print:hidden">
                    <div className="flex items-center gap-1">
                      <span className={`text-[10px] ${theme.textSecondary}`}>{t.refLines}</span>
                      <select 
@@ -863,17 +1001,56 @@ const App: React.FC = () => {
                      </select>
                    </div>
                   
-                  <span className={`text-[10px] ${theme.textSecondary} ml-2`}>{t.yScale}</span>
-                  <input 
-                    placeholder="Min" 
-                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
-                    value={yMinAccel} onChange={(e) => setYMinAccel(e.target.value)}
-                  />
-                  <input 
-                    placeholder="Max" 
-                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
-                    value={yMaxAccel} onChange={(e) => setYMaxAccel(e.target.value)}
-                  />
+                  <div className="flex items-center gap-1">
+                    <span className={`text-[10px] ${theme.textSecondary}`}>{t.yScale}</span>
+                    <input 
+                        placeholder="Min" 
+                        className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                        value={yMinAccel} onChange={(e) => setYMinAccel(e.target.value)}
+                    />
+                    <input 
+                        placeholder="Max" 
+                        className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                        value={yMaxAccel} onChange={(e) => setYMaxAccel(e.target.value)}
+                    />
+                  </div>
+                  
+                  <div className={`w-px h-4 bg-gray-700 mx-1`}></div>
+
+                  {/* Pan Controls with Hand Icon */}
+                  <div className={`flex items-center gap-1 p-0.5 rounded border ${theme.border}`}>
+                     <span className={`p-1 ${theme.textSecondary}`} title="Pan Tool">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" /></svg>
+                     </span>
+                     <button onClick={() => handlePanX('left')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Pan Left">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                     </button>
+                     <button onClick={() => handlePanX('right')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Pan Right">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                     </button>
+                  </div>
+
+                  {/* X Zoom */}
+                   <div className={`flex items-center gap-1 p-0.5 rounded border ${theme.border}`}>
+                     <span className={`text-[10px] font-bold px-1 ${theme.textSecondary}`}>X</span>
+                     <button onClick={() => handleZoomX('in')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom In X">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                     </button>
+                     <button onClick={() => handleZoomX('out')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom Out X">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
+                     </button>
+                   </div>
+
+                  {/* Y Zoom */}
+                   <div className={`flex items-center gap-1 p-0.5 rounded border ${theme.border}`}>
+                     <span className={`text-[10px] font-bold px-1 ${theme.textSecondary}`}>Y</span>
+                     <button onClick={() => handleZoomY('accel', 'in')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom In Y">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                     </button>
+                     <button onClick={() => handleZoomY('accel', 'out')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom Out Y">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
+                     </button>
+                   </div>
                 </div>
               </div>
               
@@ -899,13 +1076,24 @@ const App: React.FC = () => {
             )}
 
             {/* FFT CHART */}
-            {exportSelection.fft && (
-            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
+            {exportSelection.fft && isFFTVisible && (
+            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col shrink-0`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
                     {t.fft} ({accelAxis.toUpperCase()})
                 </h2>
-                <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}: {peakFreq?.freq.toFixed(2)}Hz</span>
+                <div className="flex items-center gap-4">
+                  <span className={`text-xs ${theme.textSecondary}`}>{t.dominant}: {peakFreq?.freq.toFixed(2)}Hz</span>
+                  <button 
+                    onClick={() => setIsFFTVisible(false)}
+                    className={`text-[10px] p-1 rounded hover:bg-red-500/20 hover:text-red-500 transition-colors ${theme.textSecondary}`}
+                    title={t.hideChart}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div className="flex-1 min-h-0">
                 <FFTChart 
@@ -920,7 +1108,7 @@ const App: React.FC = () => {
 
             {/* KINEMATICS CHART */}
             {exportSelection.kinematics && (
-            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col`} style={{ height: chartHeight }}>
+            <div className={`${theme.bgCard} border ${theme.border} rounded-xl p-4 shadow-sm flex flex-col shrink-0`} style={{ height: chartHeight }}>
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex items-center gap-4">
                   <h2 className={`text-sm font-bold ${theme.textSecondary} flex items-center gap-2`}>
@@ -942,18 +1130,57 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 print:hidden">
-                  <span className={`text-[10px] ${theme.textSecondary}`}>{t.yScale}</span>
-                  <input 
-                    placeholder="Min" 
-                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
-                    value={yMinInt} onChange={(e) => setYMinInt(e.target.value)}
-                  />
-                  <input 
-                    placeholder="Max" 
-                    className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
-                    value={yMaxInt} onChange={(e) => setYMaxInt(e.target.value)}
-                  />
+                <div className="flex items-center gap-3 print:hidden">
+                  <div className="flex items-center gap-1">
+                    <span className={`text-[10px] ${theme.textSecondary}`}>{t.yScale}</span>
+                    <input 
+                      placeholder="Min" 
+                      className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                      value={yMinInt} onChange={(e) => setYMinInt(e.target.value)}
+                    />
+                    <input 
+                      placeholder="Max" 
+                      className={`w-12 text-[10px] p-1 rounded border ${theme.border} bg-transparent ${theme.textPrimary}`}
+                      value={yMaxInt} onChange={(e) => setYMaxInt(e.target.value)}
+                    />
+                  </div>
+                  
+                  <div className={`w-px h-4 bg-gray-700 mx-1`}></div>
+
+                  {/* Pan Controls Int */}
+                   <div className={`flex items-center gap-1 p-0.5 rounded border ${theme.border}`}>
+                     <span className={`p-1 ${theme.textSecondary}`} title="Pan Tool">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" /></svg>
+                     </span>
+                     <button onClick={() => handlePanX('left')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Pan Left">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                     </button>
+                     <button onClick={() => handlePanX('right')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Pan Right">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                     </button>
+                  </div>
+
+                  {/* X Zoom Int */}
+                   <div className={`flex items-center gap-1 p-0.5 rounded border ${theme.border}`}>
+                     <span className={`text-[10px] font-bold px-1 ${theme.textSecondary}`}>X</span>
+                     <button onClick={() => handleZoomX('in')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom In X">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                     </button>
+                     <button onClick={() => handleZoomX('out')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom Out X">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
+                     </button>
+                   </div>
+
+                  {/* Y Zoom Int */}
+                   <div className={`flex items-center gap-1 p-0.5 rounded border ${theme.border}`}>
+                     <span className={`text-[10px] font-bold px-1 ${theme.textSecondary}`}>Y</span>
+                     <button onClick={() => handleZoomY('int', 'in')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom In Y">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                     </button>
+                     <button onClick={() => handleZoomY('int', 'out')} className={`p-1 rounded hover:bg-gray-500/20 ${theme.textPrimary}`} title="Zoom Out Y">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
+                     </button>
+                   </div>
                 </div>
               </div>
               

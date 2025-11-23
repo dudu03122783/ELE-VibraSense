@@ -158,8 +158,8 @@ export const TimeChart: React.FC<TimeChartProps> = ({
           )}
 
           {referenceLines && referenceLines.map((val, idx) => (
-             <ReferenceLine key={idx} y={val} stroke="#ef4444" strokeDasharray="3 3" opacity={0.7}>
-               <Label value={val.toString()} position="right" fill="#ef4444" fontSize={10} />
+             <ReferenceLine key={idx} y={val} stroke="#ef4444" strokeWidth={2} strokeDasharray="4 2" opacity={1}>
+               <Label value={val.toString()} position="right" fill="#ef4444" fontSize={10} fontWeight="bold" />
              </ReferenceLine>
           ))}
           
@@ -173,7 +173,16 @@ export const TimeChart: React.FC<TimeChartProps> = ({
               strokeWidth={2}
               strokeDasharray="3 3"
               ifOverflow="hidden" // Hide if outside current zoom
-            />
+            >
+              <Label 
+                value={`0-Pk: ${globalStats.zeroPk.toFixed(2)}`} 
+                position="top" 
+                fill={textColor} 
+                fontSize={12} 
+                fontWeight="bold"
+                offset={10}
+              />
+            </ReferenceDot>
           )}
 
           {globalStats?.maxPkPkPair && (
@@ -185,7 +194,17 @@ export const TimeChart: React.FC<TimeChartProps> = ({
                 fill="#fbbf24" 
                 stroke="none"
                 ifOverflow="hidden"
-              />
+              >
+                {/* Show Label on the first point of the pair */}
+                <Label 
+                  value={`Pk-Pk: ${globalStats.pkPk.toFixed(2)}`} 
+                  position="top" 
+                  fill={textColor} 
+                  fontSize={12} 
+                  fontWeight="bold" 
+                  offset={10}
+                />
+              </ReferenceDot>
               <ReferenceDot 
                 x={globalStats.maxPkPkPair[1].time} 
                 y={globalStats.maxPkPkPair[1].value} 
@@ -215,10 +234,16 @@ export const FFTChart: React.FC<FFTChartProps> = ({
   gridColor = "#374151",
   textColor = "#9ca3af"
 }) => {
+  
+  // Get top 3 peaks
+  const top3Peaks = [...data]
+    .sort((a, b) => b.magnitude - a.magnitude)
+    .slice(0, 3);
+
   return (
     <div className="h-full w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+        <AreaChart data={data} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
           <defs>
             <linearGradient id={`colorSplit-${color}`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor={color} stopOpacity={0.8}/>
@@ -243,8 +268,8 @@ export const FFTChart: React.FC<FFTChartProps> = ({
           <Tooltip 
             cursor={{stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3'}}
             contentStyle={{ backgroundColor: 'rgba(17, 24, 39, 0.9)', border: `1px solid ${gridColor}`, color: '#fff' }}
-            formatter={(value: number) => [value.toFixed(4), 'Magnitude']}
-            labelFormatter={(label) => `Freq: ${Number(label).toFixed(2)}Hz`}
+            formatter={(value: number) => [`${value.toFixed(2)} Gals`, 'Magnitude']}
+            labelFormatter={(label) => `Freq: ${Number(label).toFixed(1)} Hz`}
           />
           <Area 
             type="monotone" 
@@ -254,6 +279,28 @@ export const FFTChart: React.FC<FFTChartProps> = ({
             fill={`url(#colorSplit-${color})`} 
             isAnimationActive={false}
           />
+          
+          {top3Peaks.map((point, index) => (
+             point.magnitude > 0 && (
+              <ReferenceDot 
+                key={index}
+                x={point.frequency} 
+                y={point.magnitude} 
+                r={4} 
+                fill={color} 
+                stroke="#fff" 
+                strokeWidth={2}
+              >
+                 <Label 
+                   value={`${point.magnitude.toFixed(2)} Gals, ${point.frequency.toFixed(1)} Hz`} 
+                   position="top" 
+                   fill={textColor} 
+                   fontSize={12} 
+                   fontWeight="bold"
+                 />
+              </ReferenceDot>
+             )
+          ))}
         </AreaChart>
       </ResponsiveContainer>
     </div>
