@@ -2,10 +2,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import FileUpload from './components/FileUpload';
 import { TimeChart, FFTChart } from './components/Charts';
-import { calculateFFT, calculateStats, downsampleData, parseCSV, processVibrationData } from './utils/mathUtils';
+import { calculateFFT, calculateStats, downsampleData, parseCSV, processVibrationData, calculateLiftBoundaries, calculateIsoStats } from './utils/mathUtils';
 import { applyFilters } from './utils/dspUtils';
 import { analyzeWithGemini } from './services/geminiService';
-import { ProcessedDataPoint, DataAxis, AnalysisStats, AIAnalysisResult, ThemeConfig, FilterConfig, RawDataPoint } from './types';
+import { ProcessedDataPoint, DataAxis, AnalysisStats, AIAnalysisResult, ThemeConfig, FilterConfig, RawDataPoint, ElevatorBoundaries, IsoStats } from './types';
 
 const SAMPLE_RATE = 1600;
 
@@ -16,8 +16,9 @@ const TRANSLATIONS = {
     upload: '上传文件',
     theme: '主题',
     close: '关闭文件',
-    globalStats: '全局统计',
-    globalStatsNote: '(仅作为参考Z轴的PK-PK、0-PK计算暂时不准确)',
+    globalStats: 'ISO 18738 / GB/T 24474 统计',
+    globalStatsNote: '界限定义: t1-t2 (恒速区), t0-t3 (全过程)',
+    showBoundaries: '显示界限 (Lim 0-3)',
     windowAnalysis: '窗口分析 (FFT)',
     windowControl: '分析窗口控制',
     viewControl: '视图 / 缩放控制',
@@ -70,14 +71,17 @@ const TRANSLATIONS = {
     cancel: '取消',
     showChart: '显示图表',
     hideChart: '隐藏图表',
+    t1t2: '恒速区 (t1-t2)',
+    t0t3: '全过程 (t0-t3)'
   },
   en: {
     title: 'MESE ELEVATOR VIBRATION ANALYSIS SYSTEM',
     upload: 'Upload File',
     theme: 'Theme',
     close: 'Close File',
-    globalStats: 'Global Stats',
-    globalStatsNote: '(For reference only, Z-axis data is temporarily inaccurate)',
+    globalStats: 'ISO 18738 / GB/T 24474 Stats',
+    globalStatsNote: 'Boundaries: t1-t2 (Const Vel), t0-t3 (Total)',
+    showBoundaries: 'Show Boundaries (Lim 0-3)',
     windowAnalysis: 'Window Analysis (FFT)',
     windowControl: 'Analysis Window',
     viewControl: 'View / Zoom Control',
@@ -130,6 +134,8 @@ const TRANSLATIONS = {
     cancel: 'Cancel',
     showChart: 'Show Chart',
     hideChart: 'Hide Chart',
+    t1t2: 'Const Vel (t1-t2)',
+    t0t3: 'Total (t0-t3)'
   }
 };
 
@@ -209,6 +215,11 @@ const App: React.FC = () => {
   const [displayData, setDisplayData] = useState<ProcessedDataPoint[]>([]);
   const [finalProcessedData, setFinalProcessedData] = useState<ProcessedDataPoint[] | null>(null);
 
+  // ISO Calculation State
+  const [boundaries, setBoundaries] = useState<ElevatorBoundaries | null>(null);
+  const [isoStats, setIsoStats] = useState<IsoStats | null>(null);
+  const [showIsoBoundaries, setShowIsoBoundaries] = useState(true);
+
   // DSP State
   const [filterConfig, setFilterConfig] = useState<FilterConfig>({
     enabled: false,
@@ -281,6 +292,12 @@ const App: React.FC = () => {
     const processed = processVibrationData(dataToProcess, SAMPLE_RATE);
     setFinalProcessedData(processed);
 
+    // Calculate ISO Boundaries and Stats
+    const bounds = calculateLiftBoundaries(processed);
+    setBoundaries(bounds);
+    const stats = calculateIsoStats(processed, bounds);
+    setIsoStats(stats);
+
   }, [rawData, filterConfig]);
 
   useEffect(() => {
@@ -299,10 +316,42 @@ const App: React.FC = () => {
     return finalProcessedData.slice(startIndex, Math.min(endIndex, finalProcessedData.length));
   }, [finalProcessedData, windowStart, windowSize]);
 
-  const globalStats = useMemo(() => {
-    if (!finalProcessedData) return null;
-    return calculateStats(finalProcessedData, accelAxis);
-  }, [finalProcessedData, accelAxis]);
+  // Determine which global stats to show based on axis
+  const currentGlobalStats = useMemo(() => {
+    if (!isoStats) return null;
+    if (accelAxis === 'ax') return isoStats.x.constVel;
+    if (accelAxis === 'ay') return isoStats.y.constVel;
+    // For Z, prioritize Const Vel stats for A95, but we might want to toggle views later. 
+    // Standard says: Const Vel -> A95, Global -> Max PkPk.
+    // Let's pass a merged object for visualization purposes, focusing on Const Vel A95 and Global PkPk if Z
+    if (accelAxis === 'az') {
+      return {
+        ...isoStats.z.constVel, 
+        pkPk: isoStats.z.global?.pkPk || isoStats.z.constVel.pkPk, // Use Global for Max PkPk
+        maxPkPkPair: isoStats.z.global?.maxPkPkPair // Visual markers for global max
+      };
+    }
+    return null;
+  }, [isoStats, accelAxis]);
+
+  // Construct Visual Boundaries for Chart
+  const { isoVerticalLines, isoHighlightAreas } = useMemo(() => {
+    if (!showIsoBoundaries) return { isoVerticalLines: [], isoHighlightAreas: [] };
+    if (!boundaries || !boundaries.isValid) return { isoVerticalLines: [], isoHighlightAreas: [] };
+    
+    const lines = [
+      { x: boundaries.t0, color: '#22c55e', label: 'Lim 0', dash: '3 3' }, // Green Dash
+      { x: boundaries.t1, color: '#3b82f6', label: 'Lim 1' }, // Blue Solid
+      { x: boundaries.t2, color: '#3b82f6', label: 'Lim 2' }, // Blue Solid
+      { x: boundaries.t3, color: '#ef4444', label: 'Lim 3', dash: '3 3' }, // Red Dash
+    ];
+    
+    const areas = [
+      { x1: boundaries.t1, x2: boundaries.t2, color: '#a855f7' } // Purple area for const vel
+    ];
+
+    return { isoVerticalLines: lines, isoHighlightAreas: areas };
+  }, [boundaries, showIsoBoundaries]);
 
   const { fftData, windowStats, peakFreq } = useMemo(() => {
     if (currentWindowData.length === 0) return { fftData: [], windowStats: null, peakFreq: null };
@@ -648,32 +697,86 @@ const App: React.FC = () => {
         >
           <div className="p-6 space-y-6 pb-20">
             
-            {/* 1. Global Stats */}
+            {/* 1. Global ISO Stats */}
             <div className={`${theme.bgCard} rounded-xl p-4 border ${theme.border} shadow-sm`}>
-              <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase mb-3 flex items-center gap-2`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${theme.accent.replace('text-', 'bg-')}`}></span>
-                {t.globalStats} ({accelAxis.toUpperCase()})
-              </h3>
-              <div className="space-y-2">
-                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                   <span className={`text-xs ${theme.textSecondary}`}>{t.maxPkPk}</span>
-                   <span className="font-mono text-sm">{globalStats?.pkPk.toFixed(3)}</span>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className={`text-xs font-bold ${theme.textSecondary} uppercase flex items-center gap-2`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${theme.accent.replace('text-', 'bg-')}`}></span>
+                  {t.globalStats} ({accelAxis.toUpperCase()})
+                </h3>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <span className={`text-[10px] ${theme.textSecondary}`}>{t.showBoundaries}</span>
+                  <input 
+                    type="checkbox" 
+                    checked={showIsoBoundaries}
+                    onChange={(e) => setShowIsoBoundaries(e.target.checked)}
+                    className="rounded border-gray-600 bg-gray-800 focus:ring-0 w-3 h-3"
+                  />
+                </label>
+              </div>
+              
+              {isoStats && (
+                <div className="space-y-4">
+                  {/* Const Vel Section (t1-t2) */}
+                  <div>
+                    <h4 className={`text-[10px] font-bold ${theme.textSecondary} border-b ${theme.border} mb-2`}>
+                      {t.t1t2}
+                    </h4>
+                    {accelAxis === 'az' ? (
+                      <div className="space-y-1">
+                         <div className="flex justify-between text-xs">
+                           <span>{t.a95}</span>
+                           <span className="font-mono">{isoStats.z.constVel.a95.toFixed(3)}</span>
+                         </div>
+                         <div className="flex justify-between text-xs">
+                           <span>{t.maxPkPk}</span>
+                           <span className="font-mono">{isoStats.z.constVel.pkPk.toFixed(3)}</span>
+                         </div>
+                      </div>
+                    ) : accelAxis === 'ax' ? (
+                      <div className="space-y-1">
+                         <div className="flex justify-between text-xs">
+                           <span>{t.a95}</span>
+                           <span className="font-mono">{isoStats.x.constVel.a95.toFixed(3)}</span>
+                         </div>
+                         <div className="flex justify-between text-xs">
+                           <span>{t.maxPkPk}</span>
+                           <span className="font-mono">{isoStats.x.constVel.pkPk.toFixed(3)}</span>
+                         </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                         <div className="flex justify-between text-xs">
+                           <span>{t.a95}</span>
+                           <span className="font-mono">{isoStats.y.constVel.a95.toFixed(3)}</span>
+                         </div>
+                         <div className="flex justify-between text-xs">
+                           <span>{t.maxPkPk}</span>
+                           <span className="font-mono">{isoStats.y.constVel.pkPk.toFixed(3)}</span>
+                         </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Global Section (t0-t3) - Mainly for Z */}
+                  {accelAxis === 'az' && isoStats.z.global && (
+                    <div>
+                      <h4 className={`text-[10px] font-bold ${theme.textSecondary} border-b ${theme.border} mb-2 mt-2`}>
+                        {t.t0t3}
+                      </h4>
+                      <div className="space-y-1">
+                         <div className="flex justify-between text-xs font-bold text-yellow-500">
+                           <span>{t.maxPkPk}</span>
+                           <span className="font-mono">{isoStats.z.global.pkPk.toFixed(3)}</span>
+                         </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                   <span className={`text-xs ${theme.textSecondary}`}>{t.max0Pk}</span>
-                   <span className="font-mono text-sm">{globalStats?.zeroPk.toFixed(3)}</span>
-                </div>
-                <div className={`flex justify-between items-center border-b ${theme.border} pb-1`}>
-                   <span className={`text-xs ${theme.textSecondary}`}>{t.a95}</span>
-                   <span className="font-mono text-sm">{globalStats?.a95.toFixed(3)}</span>
-                </div>
-                <div className="flex justify-between items-center pt-1">
-                   <span className={`text-xs ${theme.accent} font-bold`}>{t.rms}</span>
-                   <span className={`font-mono text-sm ${theme.accent}`}>{globalStats?.rms.toFixed(3)}</span>
-                </div>
-                <div className="text-[10px] text-yellow-500 mt-2 opacity-80 italic">
+              )}
+              
+              <div className="text-[10px] text-gray-500 mt-3 opacity-80 italic">
                   {t.globalStatsNote}
-                </div>
               </div>
             </div>
 
@@ -1062,8 +1165,10 @@ const App: React.FC = () => {
                   syncId="timeSync"
                   windowRange={{ start: windowStart, end: windowStart + windowSize }}
                   onChartClick={handleChartClick}
-                  globalStats={globalStats}
+                  globalStats={currentGlobalStats}
                   referenceLines={refLineLevel ? [refLineLevel, -refLineLevel] : undefined}
+                  verticalLines={isoVerticalLines}
+                  highlightAreas={isoHighlightAreas}
                   yDomain={parseDomain(yMinAccel, yMaxAccel)}
                   xDomain={viewDomain || undefined}
                   onZoom={handleZoom}
@@ -1192,6 +1297,8 @@ const App: React.FC = () => {
                   syncId="timeSync"
                   windowRange={{ start: windowStart, end: windowStart + windowSize }}
                   onChartClick={handleChartClick}
+                  verticalLines={isoVerticalLines}
+                  highlightAreas={isoHighlightAreas}
                   yDomain={parseDomain(yMinInt, yMaxInt)}
                   xDomain={viewDomain || undefined}
                   onZoom={handleZoom}

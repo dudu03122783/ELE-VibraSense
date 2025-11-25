@@ -38,6 +38,25 @@ export interface AnalysisStats {
   maxPkPkPair?: [Point, Point]; // The two adjacent peaks forming the Max Pk-Pk
 }
 
+export interface ElevatorBoundaries {
+  t0: number; // Motion start
+  t1: number; // Const vel start
+  t2: number; // Const vel end
+  t3: number; // Motion end
+  isValid: boolean;
+}
+
+export interface IsoAxisStats {
+  constVel: AnalysisStats; // Stats during t1-t2
+  global?: AnalysisStats;  // Stats during t0-t3 (for Z axis)
+}
+
+export interface IsoStats {
+  x: IsoAxisStats;
+  y: IsoAxisStats;
+  z: IsoAxisStats;
+}
+
 export interface AIAnalysisResult {
   status: 'safe' | 'warning' | 'danger' | 'unknown';
   summary: string;

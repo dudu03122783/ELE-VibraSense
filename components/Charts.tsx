@@ -6,13 +6,28 @@ import {
 } from 'recharts';
 import { FFTResult, ProcessedDataPoint, DataAxis, AnalysisStats } from '../types';
 
+interface VerticalLineDef {
+  x: number;
+  color: string;
+  label?: string;
+  dash?: string;
+}
+
+interface HighlightAreaDef {
+  x1: number;
+  x2: number;
+  color: string;
+}
+
 interface TimeChartProps {
   data: ProcessedDataPoint[];
   axis: DataAxis;
   color: string;
   syncId?: string;
   windowRange?: { start: number; end: number };
-  referenceLines?: number[];
+  referenceLines?: number[]; // Horizontal lines (e.g. +/- 10)
+  verticalLines?: VerticalLineDef[]; // Vertical lines (e.g. ISO limits)
+  highlightAreas?: HighlightAreaDef[]; // Vertical areas (e.g. Const Vel region)
   onChartClick?: (time: number) => void;
   globalStats?: AnalysisStats | null;
   yDomain?: [number | 'auto', number | 'auto'];
@@ -35,6 +50,8 @@ export const TimeChart: React.FC<TimeChartProps> = ({
   syncId,
   windowRange,
   referenceLines,
+  verticalLines,
+  highlightAreas,
   onChartClick,
   globalStats,
   yDomain = ['auto', 'auto'],
@@ -88,7 +105,7 @@ export const TimeChart: React.FC<TimeChartProps> = ({
               onChartClick(Number(e.activeLabel));
             }
           }}
-          margin={{ top: 10, right: 40, left: 10, bottom: 5 }}
+          margin={{ top: 20, right: 40, left: 10, bottom: 5 }}
         >
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} opacity={0.3} />
           <XAxis 
@@ -124,15 +141,19 @@ export const TimeChart: React.FC<TimeChartProps> = ({
             formatter={(value: number) => [formatYAxis(value), axis.toUpperCase()]}
             labelFormatter={(label) => `Time: ${Number(label).toFixed(3)}s`}
           />
-          <Line 
-            type="monotone" 
-            dataKey={axis} 
-            stroke={color} 
-            strokeWidth={1.5} 
-            dot={false} 
-            isAnimationActive={false} 
-          />
           
+          {/* ISO Highlights (Background) */}
+          {highlightAreas && highlightAreas.map((area, idx) => (
+             <ReferenceArea
+               key={`area-${idx}`}
+               x1={area.x1}
+               x2={area.x2}
+               fill={area.color}
+               fillOpacity={0.15}
+               ifOverflow="extendDomain"
+             />
+          ))}
+
           {/* Analysis Window Highlight */}
           {windowRange && (
             <ReferenceArea 
@@ -157,10 +178,44 @@ export const TimeChart: React.FC<TimeChartProps> = ({
             />
           )}
 
+          <Line 
+            type="monotone" 
+            dataKey={axis} 
+            stroke={color} 
+            strokeWidth={1.5} 
+            dot={false} 
+            isAnimationActive={false} 
+          />
+
+          {/* Horizontal Reference Lines */}
           {referenceLines && referenceLines.map((val, idx) => (
-             <ReferenceLine key={idx} y={val} stroke="#ef4444" strokeWidth={2} strokeDasharray="4 2" opacity={1}>
+             <ReferenceLine key={`href-${idx}`} y={val} stroke="#ef4444" strokeWidth={2} strokeDasharray="4 2" opacity={1}>
                <Label value={val.toString()} position="right" fill="#ef4444" fontSize={10} fontWeight="bold" />
              </ReferenceLine>
+          ))}
+
+          {/* Vertical ISO Lines */}
+          {verticalLines && verticalLines.map((line, idx) => (
+            <ReferenceLine 
+              key={`vref-${idx}`} 
+              x={line.x} 
+              stroke={line.color} 
+              strokeWidth={2} 
+              strokeDasharray={line.dash}
+              opacity={0.8}
+            >
+              {line.label && (
+                <Label 
+                  value={line.label} 
+                  position="insideTopRight" 
+                  fill={line.color} 
+                  fontSize={10} 
+                  fontWeight="bold"
+                  angle={-90} 
+                  offset={10}
+                />
+              )}
+            </ReferenceLine>
           ))}
           
           {globalStats?.max0PkPoint && (

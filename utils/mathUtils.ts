@@ -1,5 +1,5 @@
 
-import { ProcessedDataPoint, RawDataPoint, FFTResult, AnalysisStats, DataAxis, Point } from '../types';
+import { ProcessedDataPoint, RawDataPoint, FFTResult, AnalysisStats, DataAxis, Point, ElevatorBoundaries, IsoStats } from '../types';
 
 // Simple CSV Parser
 export const parseCSV = (csvText: string, fs: number = 1600): RawDataPoint[] => {
@@ -75,9 +75,6 @@ export const processVibrationData = (rawData: RawDataPoint[], fs: number): Proce
   }
 
   // 5. Assemble Result
-  // Note: We return the "detrended" acceleration as the values to plot, 
-  // assuming filtering might have already handled some DC removal, 
-  // but doing it again here ensures the VZ/SZ integration is stable.
   for (let i = 0; i < n; i++) {
     processed[i] = {
       time: rawData[i].time,
@@ -168,29 +165,35 @@ export const calculateFFT = (data: number[], fs: number): FFTResult[] => {
   return results;
 };
 
-export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): AnalysisStats => {
-  if (data.length === 0) {
+export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis, startTime?: number, endTime?: number): AnalysisStats => {
+  // Filter by time if provided
+  let slice = data;
+  if (startTime !== undefined && endTime !== undefined) {
+    slice = data.filter(d => d.time >= startTime && d.time <= endTime);
+  }
+
+  if (slice.length === 0) {
     return { peakVal: 0, peakTime: 0, rms: 0, pkPk: 0, zeroPk: 0, a95: 0 };
   }
 
   // 1. Extract Series & RMS
-  const values = new Float64Array(data.length);
+  const values = new Float64Array(slice.length);
   let sumSq = 0;
   let overallMaxAbs = 0;
   let overallMaxPoint: Point = { time: 0, value: 0 };
 
-  for (let i = 0; i < data.length; i++) {
-    const val = data[i][axis];
+  for (let i = 0; i < slice.length; i++) {
+    const val = slice[i][axis];
     values[i] = val;
     sumSq += val * val;
     
     if (Math.abs(val) > overallMaxAbs) {
       overallMaxAbs = Math.abs(val);
-      overallMaxPoint = { time: data[i].time, value: val };
+      overallMaxPoint = { time: slice[i].time, value: val };
     }
   }
 
-  const rms = Math.sqrt(sumSq / data.length);
+  const rms = Math.sqrt(sumSq / slice.length);
 
   // If not an acceleration axis, simple Max-Min is sufficient
   if (axis === 'vz' || axis === 'sz') {
@@ -236,12 +239,12 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
     return {
       value: values[bestIdx],
       abs: maxAbs,
-      time: data[bestIdx].time,
+      time: slice[bestIdx].time,
       idx: bestIdx
     };
   };
 
-  for (let i = 0; i < data.length - 1; i++) {
+  for (let i = 0; i < slice.length - 1; i++) {
     const v1 = values[i];
     const v2 = values[i+1];
     
@@ -253,7 +256,7 @@ export const calculateStats = (data: ProcessedDataPoint[], axis: DataAxis): Anal
       lastZC = i + 1;
     }
   }
-  const lastPeak = findLocalPeak(lastZC, data.length);
+  const lastPeak = findLocalPeak(lastZC, slice.length);
   if (lastPeak) peaks.push(lastPeak);
 
   // 3. Calculate Pk-Pk Values (Adjacent peaks)
@@ -329,4 +332,87 @@ export const downsampleData = (data: ProcessedDataPoint[], targetCount: number =
     if (maxIdx !== i) result.push(data[maxIdx]);
   }
   return result;
+};
+
+// --- ISO 18738 / GB/T 24474 Specific Calculations ---
+
+export const calculateLiftBoundaries = (data: ProcessedDataPoint[]): ElevatorBoundaries => {
+  const n = data.length;
+  if (n === 0) return { t0: 0, t1: 0, t2: 0, t3: 0, isValid: false };
+
+  // Find max velocity (assuming simple run)
+  let vMax = 0;
+  for(let i=0; i<n; i++) {
+    if (Math.abs(data[i].vz) > vMax) vMax = Math.abs(data[i].vz);
+  }
+
+  // Thresholds
+  const motionThreshold = vMax * 0.05; // 5% of Vmax counts as motion
+  const constVelThreshold = vMax * 0.95; // 95% of Vmax counts as constant velocity
+
+  let t0 = 0, t1 = 0, t2 = 0, t3 = data[n-1].time;
+  
+  // Find t0 (Start of motion)
+  for(let i=0; i<n; i++) {
+    if (Math.abs(data[i].vz) > motionThreshold) {
+      t0 = data[i].time;
+      break;
+    }
+  }
+
+  // Find t3 (End of motion) - search backwards
+  for(let i=n-1; i>=0; i--) {
+    if (Math.abs(data[i].vz) > motionThreshold) {
+      t3 = data[i].time;
+      break;
+    }
+  }
+
+  // Find t1 (Start of Const Vel)
+  for(let i=0; i<n; i++) {
+    if (data[i].time > t0 && Math.abs(data[i].vz) > constVelThreshold) {
+      t1 = data[i].time;
+      break;
+    }
+  }
+
+  // Find t2 (End of Const Vel)
+  for(let i=n-1; i>=0; i--) {
+    if (data[i].time < t3 && Math.abs(data[i].vz) > constVelThreshold) {
+      t2 = data[i].time;
+      break;
+    }
+  }
+
+  // Fallback if no valid plateau found
+  if (t1 === 0 || t2 === 0 || t2 <= t1) {
+    t1 = t0 + (t3-t0)*0.4;
+    t2 = t0 + (t3-t0)*0.6;
+    return { t0, t1, t2, t3, isValid: false }; // Not a standard curve
+  }
+
+  return { t0, t1, t2, t3, isValid: true };
+};
+
+export const calculateIsoStats = (data: ProcessedDataPoint[], bounds: ElevatorBoundaries): IsoStats => {
+  const { t0, t1, t2, t3 } = bounds;
+
+  // X Axis: Const Vel region only (t1-t2)
+  const xStats = calculateStats(data, 'ax', t1, t2);
+
+  // Y Axis: Const Vel region only (t1-t2)
+  const yStats = calculateStats(data, 'ay', t1, t2);
+
+  // Z Axis:
+  // 1. Const Vel (t1-t2): Max & A95
+  const zConst = calculateStats(data, 'az', t1, t2);
+  
+  // 2. Global (t0-t3): Max (covers Accel/Decel/Const)
+  const zGlobal = calculateStats(data, 'az', t0, t3);
+
+  return {
+    x: { constVel: xStats },
+    y: { constVel: yStats },
+    z: { constVel: zConst, global: zGlobal }
+  };
 };
