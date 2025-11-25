@@ -732,6 +732,10 @@ const App: React.FC = () => {
                            <span>{t.maxPkPk}</span>
                            <span className="font-mono">{isoStats.z.constVel.pkPk.toFixed(3)}</span>
                          </div>
+                         <div className="flex justify-between text-xs">
+                           <span>{t.max0Pk}</span>
+                           <span className="font-mono">{isoStats.z.constVel.zeroPk.toFixed(3)}</span>
+                         </div>
                       </div>
                     ) : accelAxis === 'ax' ? (
                       <div className="space-y-1">
@@ -743,6 +747,10 @@ const App: React.FC = () => {
                            <span>{t.maxPkPk}</span>
                            <span className="font-mono">{isoStats.x.constVel.pkPk.toFixed(3)}</span>
                          </div>
+                         <div className="flex justify-between text-xs">
+                           <span>{t.max0Pk}</span>
+                           <span className="font-mono">{isoStats.x.constVel.zeroPk.toFixed(3)}</span>
+                         </div>
                       </div>
                     ) : (
                       <div className="space-y-1">
@@ -753,6 +761,10 @@ const App: React.FC = () => {
                          <div className="flex justify-between text-xs">
                            <span>{t.maxPkPk}</span>
                            <span className="font-mono">{isoStats.y.constVel.pkPk.toFixed(3)}</span>
+                         </div>
+                         <div className="flex justify-between text-xs">
+                           <span>{t.max0Pk}</span>
+                           <span className="font-mono">{isoStats.y.constVel.zeroPk.toFixed(3)}</span>
                          </div>
                       </div>
                     )}
@@ -768,6 +780,10 @@ const App: React.FC = () => {
                          <div className="flex justify-between text-xs font-bold text-yellow-500">
                            <span>{t.maxPkPk}</span>
                            <span className="font-mono">{isoStats.z.global.pkPk.toFixed(3)}</span>
+                         </div>
+                         <div className="flex justify-between text-xs">
+                           <span>{t.max0Pk}</span>
+                           <span className="font-mono">{isoStats.z.global.zeroPk.toFixed(3)}</span>
                          </div>
                       </div>
                     </div>
